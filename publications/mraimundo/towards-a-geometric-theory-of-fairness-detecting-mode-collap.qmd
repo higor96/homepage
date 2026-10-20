@@ -4,7 +4,7 @@ date: "2026-01-01"
 author: "Beatriz Cardoso Nascimento, Marcos M Raimundo"
 author-ids: [mraimundo]
 scholar-ids: [ibe0jfQAAAAJ]
-projects: [ai-for-finance-hiaac]
+projects: [deep_moo_theory]
 categories: [Ethical AI, Fairness, Generative Models]
 description: "Beatriz Cardoso Nascimento, Marcos M Raimundo (2026). ICLR 2026 Workshop on Geometry-grounded Representation Learning and Generative Modeling."
 links:

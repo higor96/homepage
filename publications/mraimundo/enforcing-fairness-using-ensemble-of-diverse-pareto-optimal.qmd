@@ -4,7 +4,7 @@ date: "2023-09-01"
 author: "Vitória Guardieiro, Marcos M Raimundo, Jorge Poco"
 author-ids: [mraimundo]
 scholar-ids: [pH1HRJoAAAAJ, ibe0jfQAAAAJ, S_88vX4AAAAJ]
-projects: [ai-for-finance-hiaac, moml]
+projects: [moml]
 categories: [Ethical AI, Multi-objective Optimization, Fairness, Ensemble Learning]
 description: "Vitória Guardieiro, Marcos M Raimundo, Jorge Poco (2023). Data Mining and Knowledge Discovery."
 links:

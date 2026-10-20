@@ -19,6 +19,13 @@ listing:
     sort: "date desc"
     fields: [title, description]
   # publications-listing:end
+  # projects-listing:start (gerado por generate_project_pages.py — não editar)
+  - id: projects
+    contents: "../projects/gkerche/*.qmd"
+    type: default
+    sort: "date desc"
+    fields: [title, description]
+  # projects-listing:end
 ---
 
 [Institute of Computing - University of Campinas](https://ic.unicamp.br/)
@@ -29,4 +36,9 @@ listing:
 ## Publications
 
 ::: {#publications}
+:::
+
+## Projects
+
+::: {#projects}
 :::

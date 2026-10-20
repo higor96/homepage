@@ -1,6 +1,6 @@
 ---
 title: "Object-Oriented Programming"
-date: "today"
+date: "2023-08-01"
 author: "Marcos M. Raimundo"
 categories: [Disciplines, Software Engineering, Object-Oriented Programming, Java, Architecture]
 ---

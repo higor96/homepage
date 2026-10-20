@@ -4,7 +4,7 @@ date: "2025-07-11"
 author: "Marcos M Raimundo, Germain Garcia-Zanabria, Luis Gustavo Nonato, Jorge Poco"
 author-ids: [mraimundo]
 scholar-ids: [ibe0jfQAAAAJ, CMBaULYAAAAJ, p2tLSUsAAAAJ, S_88vX4AAAAJ]
-projects: [ai-for-finance-hiaac]
+projects: [applied-deep-learning]
 categories: [Explainable AI, Counterfactual Explanations, Public Safety]
 description: "Marcos M Raimundo, Germain Garcia-Zanabria, Luis Gustavo Nonato, Jorge Poco (2025). IEEE Transactions on Visualization and Computer Graphics."
 links:

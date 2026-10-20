@@ -1,6 +1,6 @@
 ---
 title: "Optimization and Linear Algebra for Machine Learning"
-date: "today"
+date: "2026-10-21"
 author: "Marcos M. Raimundo"
 categories: [Disciplines, Machine Learning, Optimization, Linear Algebra]
 include-after-body:

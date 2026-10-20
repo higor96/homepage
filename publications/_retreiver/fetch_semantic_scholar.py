@@ -45,8 +45,18 @@ REQUEST_DELAY_SECONDS = 1.5  # a API pública já pede um request/seg no máximo
 def _api_get(path: str, params: dict) -> dict:
     url = f"{API_BASE}{path}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={"User-Agent": "personal-site-publication-sync/1.0"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 5:
+                wait_time = (attempt + 1) * 3
+                print(f"[!] Semantic Scholar 429 (Rate Limit). Aguardando {wait_time}s antes de tentar novamente...")
+                time.sleep(wait_time)
+            else:
+                raise
+    return {}
 
 
 def search_author(name: str) -> list[dict]:

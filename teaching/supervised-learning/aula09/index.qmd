@@ -1,0 +1,1712 @@
+---
+title: "Aula 9: Teoria de Ensembles e Redução de Variância — Bagging e Random Forests"
+subtitle: "Supervised Learning"
+author: "Marcos M. Raimundo — Instituto de Computação, UNICAMP"
+date: "2026-10-11"
+lang: pt-BR
+format:
+  html:
+    include-after-body: ../../lesson-toc-accordion.html
+    output-file: notas.html
+    theme: [flatly, ../../../custom.scss, ../../lesson-theme.scss]
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    fig-width: 6
+    fig-height: 3.8
+  revealjs:
+    transition: slide
+    width: 1280
+    height: 800
+    margin: 0.02
+    fig-responsive: true
+    fig-format: "svg"
+    footer: "UNICAMP — Instituto de Computação"
+    chalkboard:
+      boardmarker-width: 3
+      chalk-width: 3
+    include-in-header: ../../bootstrap-icons-header.html
+    include-after-body: ../../logos-footer.html
+    title-slide-attributes:
+      data-background-image: "../../UNICAMP.png, ../../IC.png"
+      data-background-size: "140px, 140px"
+      data-background-position: "5% 8%, 95% 8%"
+    output-file: slides.html
+    slide-number: true
+    smaller: true
+    scrollable: true
+    theme: [simple, ../../lesson-theme.scss]
+    fig-width: 6
+    fig-height: 3.8
+jupyter: homepage
+execute:
+  warning: false
+  message: false
+---
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+[Slides](slides.html){.see-all aria-label="Ver slides" title="Ver slides"}
+[Lista de aulas](../index.qmd){.see-all .lesson-list-link aria-label="Lista de aulas" title="Lista de aulas"}
+:::
+
+```{python}
+#| echo: false
+#| fig-align: center
+
+# =====================================================================
+# SETUP GLOBAL — executado uma vez, estado compartilhado pelos chunks
+# =====================================================================
+from huggingface_hub.utils import logging as hf_logging
+hf_logging.set_verbosity_error()
+from datasets import disable_progress_bar, load_dataset
+disable_progress_bar()
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import BaggingRegressor, RandomForestRegressor
+from sklearn.inspection import permutation_importance
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+import warnings
+warnings.filterwarnings("ignore")
+
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams.update({
+    "figure.dpi": 130,
+    "font.size": 11,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+    "legend.frameon": True,
+    "legend.framealpha": 0.9,
+})
+
+COR_A = "#2b5c8f"    # Azul institucional
+COR_B = "#d95f02"    # Laranja quente
+COR_NEU = "#7570b3"  # Roxo
+COR_CINZA = "#7f7f7f"
+COR_VERDE = "#1b9e77"
+
+# Semente determinística
+rng = np.random.default_rng(20261011)
+
+# Carregamento do dataset real California Housing
+cal_df = load_dataset("gvlassis/california_housing")["train"].to_pandas()
+features = ["MedInc", "HouseAge", "AveRooms", "AveBedrms", "Population", "AveOccup", "Latitude", "Longitude"]
+X_cal = cal_df[features].values
+y_cal = cal_df["MedHouseVal"].values
+
+# Amostra de trabalho (2.000 treino, 1.000 teste)
+X_train, X_test, y_train, y_test = train_test_split(X_cal, y_cal, train_size=2000, test_size=1000, random_state=42)
+
+# Modelo 1: Árvore Única Profunda
+dt_single = DecisionTreeRegressor(random_state=42)
+dt_single.fit(X_train, y_train)
+mse_dt_train = mean_squared_error(y_train, dt_single.predict(X_train))
+mse_dt_test = mean_squared_error(y_test, dt_single.predict(X_test))
+
+# Modelo 2: Bagging com 100 Árvores
+bag_100 = BaggingRegressor(estimator=DecisionTreeRegressor(random_state=42), n_estimators=100, random_state=42, oob_score=True)
+bag_100.fit(X_train, y_train)
+mse_bag_train = mean_squared_error(y_train, bag_100.predict(X_train))
+mse_bag_test = mean_squared_error(y_test, bag_100.predict(X_test))
+oob_bag = mean_squared_error(y_train, bag_100.oob_prediction_)
+
+# Modelo 3: Random Forest com 100 Árvores (m = 3)
+rf_100 = RandomForestRegressor(n_estimators=100, max_features=3, random_state=42, oob_score=True)
+rf_100.fit(X_train, y_train)
+mse_rf_train = mean_squared_error(y_train, rf_100.predict(X_train))
+mse_rf_test = mean_squared_error(y_test, rf_100.predict(X_test))
+oob_rf = mean_squared_error(y_train, rf_100.oob_prediction_)
+
+# Trajetória de convergência do erro com B (1 a 100 árvores)
+trees_range = np.array([1, 2, 5, 10, 20, 30, 50, 75, 100])
+test_errors_bag = []
+test_errors_rf = []
+for b in trees_range:
+    # Bagging
+    b_bag = BaggingRegressor(estimator=DecisionTreeRegressor(random_state=42), n_estimators=b, random_state=42)
+    b_bag.fit(X_train, y_train)
+    test_errors_bag.append(mean_squared_error(y_test, b_bag.predict(X_test)))
+    # RF (m=3)
+    b_rf = RandomForestRegressor(n_estimators=b, max_features=3, random_state=42)
+    b_rf.fit(X_train, y_train)
+    test_errors_rf.append(mean_squared_error(y_test, b_rf.predict(X_test)))
+
+# Análise de correlação e variância em função de m
+m_values = [1, 2, 3, 5, 8]
+rho_list = []
+var_list = []
+mse_test_m = []
+oob_m = []
+
+for m in m_values:
+    rf_m = RandomForestRegressor(n_estimators=100, max_features=m, random_state=42, oob_score=True)
+    rf_m.fit(X_train, y_train)
+    preds = np.array([tree.predict(X_test) for tree in rf_m.estimators_])
+    corr = np.corrcoef(preds)
+    mask = ~np.eye(100, dtype=bool)
+    rho_list.append(corr[mask].mean())
+    var_list.append(np.var(preds, axis=0).mean())
+    mse_test_m.append(mean_squared_error(y_test, rf_m.predict(X_test)))
+    oob_m.append(mean_squared_error(y_train, rf_m.oob_prediction_))
+
+# Importância de atributos: MDI vs MDA
+mdi_importances = rf_100.feature_importances_
+perm_res = permutation_importance(rf_100, X_test, y_test, n_repeats=10, random_state=42)
+mda_importances = perm_res.importances_mean
+
+# Valores específicos para citação direta no texto
+oob_theoretical = (1 - 1/2000)**2000
+inv_e = 1 / np.e
+```
+
+# Revisão e Introdução
+
+## Revisão: O Que a Decomposição Viés-Variância Diz
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Na Aula 8, encerramos a Parte 2 do curso derivando analiticamente a decomposição formal do Erro Quadrático Médio Esperado ($\text{EMSE}$):
+
+$$\text{EMSE}(\mathbf{x}) = \mathbb{E}_{\mathcal{D}, \epsilon}\left[(y - \hat{f}(\mathbf{x}; \mathcal{D}))^2\right] = \text{Bias}^2(\mathbf{x}) + \text{Var}(\mathbf{x}) + \sigma^2$$
+
+onde $\text{Bias}^2(\mathbf{x}) = (f(\mathbf{x}) - \bar{f}(\mathbf{x}))^2$ mede o erro de aproximação estrutural do estimador médio $\bar{f}(\mathbf{x}) = \mathbb{E}_{\mathcal{D}}[\hat{f}(\mathbf{x}; \mathcal{D})]$, $\text{Var}(\mathbf{x}) = \mathbb{E}_{\mathcal{D}}[(\hat{f}(\mathbf{x}; \mathcal{D}) - \bar{f}(\mathbf{x}))^2]$ captura a variabilidade estocástica do ajuste entre diferentes conjuntos de treino finitos $\mathcal{D} \sim P(X, Y)^N$, e $\sigma^2$ é o ruído irredutível do processo gerador.
+
+Ao analisar o comportamento de diferentes classes de hipóteses sob essa ótica, identificamos duas patologias extremas:
+1. **Modelos de Alto Viés (Rígidos):** Regressões lineares simples ou árvores de decisão podadas em profundidades mínimas (*decision stumps*) sofrem de subajuste (*underfitting*). Sua rigidez estrutural é incapaz de capturar não linearidades e interações complexas entre atributos.
+2. **Modelos de Alta Variância (Instáveis):** Árvores de decisão não podadas (CART, estudadas na Aula 3) particionam o espaço recursivamente até que cada folha contenha apenas uma observação (ou um nó purificado). Tais árvores exibem um **viés assintótico extremamente baixo** ($\text{Bias}^2 \approx 0$), pois possuem capacidade suficiente para interpolar a superfície de regressão; contudo, sua **variância explode** ($\text{Var} \gg 0$). Pequenas perturbações em uma única observação de treino alteram o primeiro corte na raiz, propagando divisões radicalmente distintas por toda a hierarquia da árvore.
+
+Na Aula 7, vimos que a regularização Ridge ($L_2$) combate a variância injetando viés deliberado através do encolhimento de parâmetros. Mas surge agora a questão fundamental da Parte 3 do curso: **é possível abater a variância drástica de modelos complexos sem pagar o preço de aumentar seu viés?**
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Decomposição Formal do EMSE
+$$\text{EMSE}(\mathbf{x}) = \text{Bias}^2(\mathbf{x}) + \text{Var}(\mathbf{x}) + \sigma^2$$
+:::
+
+- **Árvores de Decisão Profundas (Aula 3):**
+  - $\text{Bias}^2 \approx 0$: capacidade não paramétrica de aproximar interações arbitrárias.
+  - $\text{Var} \gg 0$: instabilidade hierárquica extrema sob perturbações em $\mathcal{D}$.
+- **O Dilema de Regularização:**
+  - Ridge/Lasso (Aula 7) abatem variância aumentando o viés.
+- **A Pergunta Central da Aula 9:**
+  - É possível reduzir a variância de um estimador não paramétrico sem inflacionar seu viés?
+:::
+
+## Ideia Central: A Média Estatística como Estabilizador
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Se considerarmos a predição $\hat{f}(\mathbf{x}; \mathcal{D})$ de um estimador como uma variável aleatória condicionada à realização da amostra $\mathcal{D}$, a teoria clássica de probabilidades nos ensina que a média de múltiplas variáveis aleatórias independentes possui a mesma esperança de cada variável individual, mas uma variância dividida pelo número de termos.
+
+Assim, se pudéssemos coletar $B$ conjuntos de treinamento independentes $\mathcal{D}_1, \dots, \mathcal{D}_B$ da distribuição populacional $P(X, Y)$, ajustar uma árvore profunda em cada um e calcular a predição média:
+
+$$\bar{f}_B(\mathbf{x}) = \frac{1}{B} \sum_{b=1}^B \hat{f}(\mathbf{x}; \mathcal{D}_b)$$
+
+obteríamos um estimador com exatamente o mesmo baixo viés de uma única árvore, mas com variância reduzida por um fator $1/B$.
+
+No entanto, em problemas práticos de aprendizado supervisionado, **possuímos apenas uma única amostra de treino $\mathcal{D}$**. A solução proposta por Leo Breiman (1996, 2001) reside na combinação de duas técnicas profundas:
+1. **Bootstrap Aggregation (Bagging):** Simular a amostragem da população reamostrando o próprio conjunto de treino com reposição ($Z^{*b} \sim \hat{P}_N$).
+2. **Subamostragem de Atributos (Random Forests):** Forçar a descorrelação entre as árvores sortando um subconjunto restrito de $m \le p$ variáveis em cada ponto de corte, quebrando a dependência residual imposta pela dominância dos atributos mais fortes.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+- **O Princípio Teórico:**
+  - Seja $T_1, \dots, T_B$ estimadores independentes com $\mathbb{E}[T_b] = \mu$ e $\text{Var}(T_b) = \sigma^2$.
+  - A média $\bar{T} = \frac{1}{B} \sum_{b=1}^B T_b$ satisfaz:
+    $$\mathbb{E}[\bar{T}] = \mu, \qquad \text{Var}(\bar{T}) = \frac{\sigma^2}{B}$$
+:::
+
+::: {.fragment}
+- **A Realidade Prática:**
+  - Não temos $B$ amostras independentes da natureza, mas apenas um único conjunto $\mathcal{D}$.
+:::
+
+::: {.fragment}
+- **A Solução em Duas Frentes:**
+  1. **Bagging (Breiman, 1996):** Reamostragem bootstrap com reposição ($\mathcal{D}^{*b} \sim \hat{P}_N$).
+  2. **Random Forests (Breiman, 2001):** Subamostragem aleatória de atributos ($m \le p$) para quebrar a correlação entre as árvores.
+:::
+:::
+
+## Roteiro da Aula
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Para construir e validar formalmente essa teoria, estruturamos nossa investigação em cinco perguntas fundamentais:
+
+1. **Por que a média de estimadores preserva rigorosamente o viés original enquanto opera na variância?**
+2. **Como demonstrar analiticamente a fórmula da variância para variáveis aleatórias correlacionadas $\rho \sigma^2 + \frac{1-\rho}{B}\sigma^2$?**
+3. **Qual é o gargalo assintótico do Bagging puro e como a seleção aleatória de atributos de Breiman (2001) reduz o teto $\rho \sigma^2$?**
+4. **Por que aproximadamente $36{,}8\%$ dos dados não entram em cada réplica bootstrap e como utilizá-los para validação Out-of-Bag (OOB) sem custo computacional adicional?**
+5. **Quais são os mecanismos matemáticos e as armadilhas práticas das métricas de importância de variáveis por impureza (MDI) vs. por permutação (MDA)?**
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+1. **Preservação de Viés:** Por que a média aritmética não diminui o viés?
+2. **Variância Correlacionada:** Dedução de $\text{Var}(\bar{T}) = \rho \sigma^2 + \frac{1-\rho}{B}\sigma^2$.
+3. **Random Forests:** Como o sorteio de $m \le p$ variáveis quebra $\rho$?
+4. **Validação OOB:** A dedução de $(1 - 1/N)^N \to 1/e \approx 0{,}368$ e o erro sem particionamento extra.
+5. **Importância de Atributos:** Contraste formal entre impureza (MDI) e permutação (MDA).
+:::
+
+## Problema Motivador: A Instabilidade de uma Única Árvore
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Para observar numericamente o problema da variância, treinamos uma árvore de decisão de regressão profunda (`DecisionTreeRegressor`) no conjunto *California Housing* com $N = 2.000$ observações de treino e $1.000$ de teste.
+
+Os resultados empíricos revelam a assinatura imediata do sobreajuste severo:
+- **Erro de Treino da Árvore Única:** $\text{MSE}_{\text{treino}} = 0{,}0000$ (a árvore atingiu folhas puras, interpolando os dados de treino perfeitamente).
+- **Erro de Teste da Árvore Única:** $\text{MSE}_{\text{teste}} = 0{,}6133$.
+
+Quando geramos um ensemble Bagging com $B = 100$ árvores bootstrapped sobre esse mesmo conjunto, o erro de teste cai imediatamente para $0{,}3044$ (uma redução de mais de $50\%$ no erro quadrático). Ao aplicarmos Florestas Aleatórias com seleção aleatória de $m = 3$ variáveis por corte, o erro de teste recua ainda mais, atingindo $0{,}2897$.
+
+O gráfico a seguir ilustra a evolução do erro quadrático médio de teste em função do número de árvores $B \in [1, 100]$:
+:::
+
+::: {.content-visible when-format="revealjs"}
+:::: {.columns}
+
+::: {.column width="50%"}
+- **Árvore de Decisão Não Podada ($N = 2.000$):**
+  - $\text{MSE}_{\text{treino}} = 0{,}0000$ (interpolação perfeita das folhas).
+  - $\text{MSE}_{\text{teste}} = 0{,}6133$ (variância catastrófica).
+:::
+
+::: {.column width="50%"}
+- **Bagging ($B = 100$ árvores):**
+  - $\text{MSE}_{\text{teste}} = 0{,}3044$ (corte de $50\%$ no erro de teste).
+- **Random Forest ($B = 100$, $m = 3$):**
+  - $\text{MSE}_{\text{teste}} = 0{,}2897$ (ganho adicional por descorrelação).
+:::
+
+::::
+:::
+
+::: {.fig-resize style="width: 60%; margin: 0 auto;"}
+```{python}
+#| echo: false
+fig, ax = plt.subplots(figsize=(6.5, 3.8))
+
+ax.axhline(mse_dt_test, color=COR_B, linestyle="--", linewidth=2, label=f"Árvore Única (MSE = {mse_dt_test:.4f})")
+ax.plot(trees_range, test_errors_bag, marker="o", color=COR_A, linewidth=2, label="Bagging (m = 8)")
+ax.plot(trees_range, test_errors_rf, marker="s", color=COR_VERDE, linewidth=2, label="Random Forest (m = 3)")
+
+ax.set_title("Evolução do Erro de Teste com o Tamanho do Ensemble (B)")
+ax.set_xlabel("Número de Árvores no Ensemble (B)")
+ax.set_ylabel("Erro Quadrático Médio de Teste (MSE)")
+ax.set_ylim(0.25, 0.65)
+ax.legend(loc="upper right")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+## Pausa 1: Mecânica da Média e Comportamento do Viés
+
+::: {.callout-tip}
+## O Paradoxo do Subajuste
+Um cientista de dados treina uma regressão linear simples $y = \beta_0 + \beta_1 x$ para aproximar uma função fortemente senoidal e observa um erro de treino elevado e um erro de validação igualmente elevado ($\text{MSE} \approx 0{,}85$). O pesquisador então sugere: *"Vamos aplicar Bagging com $B = 500$ réplicas bootstrap para resolver o problema."* Qual é o erro fundamental dessa estratégia?
+:::
+
+::: {.callout-tip}
+## V ou F: Fundamentos da Média de Modelos
+Julgue V ou F — a questão só conta se acertar os 4 itens:
+
+- □ A média aritmética das predições de múltiplos modelos possui, por linearidade da esperança, um viés idêntico ao viés esperado de cada modelo base individual.
+- □ O Bagging é uma técnica projetada primariamente para combater o viés de modelos que sofrem de subajuste (*underfitting*).
+- □ Em árvores de decisão profundas, o viés é naturalmente baixo devido à alta flexibilidade de particionamento local do espaço de atributos.
+- □ Aumentar o número de árvores $B$ indefinidamente em um ensemble Bagging eventualmente levará o modelo a sofrer sobreajuste (*overfitting*).
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Pausa Ativa 1: Resposta
+
+::: {.callout-tip}
+## V ou F: Resposta
+- ✔ **V:** $\mathbb{E}\left[\frac{1}{B}\sum T_b\right] = \frac{1}{B}\sum \mathbb{E}[T_b] = \mathbb{E}[T]$, preservando o viés inalterado.
+- ✗ **F:** O Bagging atua na variância; modelos com alto viés permanecem enviesados após a média.
+- ✔ **V:** Árvores profundas têm alta capacidade de aproximação não paramétrica, mantendo baixo viés.
+- ✗ **F:** Conforme provado por Breiman (2001), o erro de generalização do Bagging/RF converge para um limite finito quando $B \to \infty$, sem divergir para overfitting.
+:::
+
+::: {.fragment}
+**Voltando à pergunta:** A proposta é completamente equivocada. O modelo linear sofre de **alto viés** (falta de capacidade estrutural para capturar a senoide). Como a média aritmética preserva a esperança do estimador ($\mathbb{E}[\hat{f}_{\text{bag}}] = \mathbb{E}[\hat{f}_{\text{OLS}}]$), o Bagging de retas continuará sendo uma reta, com o mesmo erro estrutural de aproximadamente $0{,}85$.
+:::
+:::
+
+# Intuição — A Sabedoria das Multidões Correlacionadas
+
+## O Efeito Comitê: Variância sob Independência
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+A intuição fundamental dos métodos de ensemble remete ao **Teorema do Júri de Condorcet (1785)**: se cada membro de um comitê possui probabilidade de acerto superior ao acaso ($p > 0{,}5$) e julga de maneira estritamente independente, a probabilidade de a decisão majoritária do grupo estar correta converge para $1$ à medida que o tamanho do comitê cresce.
+
+Em aprendizado de máquina, quando estimamos uma quantidade contínua $y$, o análogo do júri é a **média aritmética das predições**. Vejamos formalmente o que acontece com a variância da média quando combinamos múltiplos estimadores sob a hipótese ideal de independência estatística.
+
+::: {.callout-note icon=false}
+## Proposição (Variância da Média de Estimadores Independentes)
+Sejam $\hat{f}_1(\mathbf{x}), \dots, \hat{f}_B(\mathbf{x})$ estimadores ajustados de forma mutuamente independente, cada um com a mesma variância $\text{Var}(\hat{f}_b(\mathbf{x})) = \sigma^2$ e covariância nula entre pares distintos: $\text{Cov}(\hat{f}_b(\mathbf{x}), \hat{f}_{b'}(\mathbf{x})) = 0$ para todo $b \neq b'$. 
+
+A variância do estimador agregado por média $\bar{f}_B(\mathbf{x}) = \frac{1}{B} \sum_{b=1}^B \hat{f}_b(\mathbf{x})$ é dada por:
+$$\text{Var}(\bar{f}_B(\mathbf{x})) = \frac{\sigma^2}{B}$$
+Em particular, $\lim_{B \to \infty} \text{Var}(\bar{f}_B(\mathbf{x})) = 0$.
+:::
+
+**Demonstração Passo a Passo:**
+
+Pela propriedade fundamental de escalonamento da variância, ao multiplicar uma variável aleatória por uma constante $c$, sua variância é multiplicada por $c^2$ ($\text{Var}(c X) = c^2 \text{Var}(X)$). Aplicando para a constante $c = 1/B$:
+$$\text{Var}(\bar{f}_B(\mathbf{x})) = \text{Var}\left(\frac{1}{B} \sum_{b=1}^B \hat{f}_b(\mathbf{x})\right) = \frac{1}{B^2} \text{Var}\left(\sum_{b=1}^B \hat{f}_b(\mathbf{x})\right)$$
+
+Expandindo a variância da soma na soma das variâncias individuais mais todas as covariâncias cruzadas par-a-par:
+$$\text{Var}\left(\sum_{b=1}^B \hat{f}_b(\mathbf{x})\right) = \sum_{b=1}^B \text{Var}(\hat{f}_b(\mathbf{x})) + \sum_{b=1}^B \sum_{b' \neq b}^B \text{Cov}(\hat{f}_b(\mathbf{x}), \hat{f}_{b'}(\mathbf{x}))$$
+
+Como todos os $B$ estimadores possuem variância idêntica $\text{Var}(\hat{f}_b(\mathbf{x})) = \sigma^2$:
+$$\sum_{b=1}^B \text{Var}(\hat{f}_b(\mathbf{x})) = \sum_{b=1}^B \sigma^2 = B \sigma^2$$
+
+Pela hipótese de **independência estatística**, os erros cometidos pelos diferentes modelos não guardam nenhuma associação entre si, de modo que $\text{Cov}(\hat{f}_b(\mathbf{x}), \hat{f}_{b'}(\mathbf{x})) = 0$ para todos os $B(B - 1)$ pares com $b \neq b'$. Portanto:
+$$\sum_{b=1}^B \sum_{b' \neq b}^B \text{Cov}(\hat{f}_b(\mathbf{x}), \hat{f}_{b'}(\mathbf{x})) = 0$$
+
+Substituindo esses dois resultados de volta na expressão da variância da média:
+$$\text{Var}(\bar{f}_B(\mathbf{x})) = \frac{1}{B^2} \left[ B\sigma^2 + 0 \right] = \frac{B\sigma^2}{B^2} = \frac{\sigma^2}{B} \quad \blacksquare$$
+
+Tomando o limite assintótico quando o número de modelos cresce indefinidamente:
+$$\lim_{B \to \infty} \text{Var}(\bar{f}_B(\mathbf{x})) = \lim_{B \to \infty} \frac{\sigma^2}{B} = 0$$
+
+Sob independência estrita, o ruído aleatório das predições se cancela mutuamente na média aritmética, e o erro de variância é completamente eliminado!
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Teorema: Variância da Média sob Independência ($\text{Cov} = 0$)
+$$\text{Var}\left(\frac{1}{B}\sum_{b=1}^B \hat{f}_b(\mathbf{x})\right) = \frac{\sigma^2}{B} \xrightarrow{B \to \infty} 0$$
+:::
+
+::: {.fragment}
+**Passo 1 — Constante Quadrática para Fora da Variância:**
+$$\text{Var}\left(\frac{1}{B}\sum_{b=1}^B \hat{f}_b(\mathbf{x})\right) = \frac{1}{B^2} \text{Var}\left(\sum_{b=1}^B \hat{f}_b(\mathbf{x})\right)$$
+:::
+
+::: {.fragment}
+**Passo 2 — Expansão em Variâncias e Covariâncias Cruzadas:**
+$$= \frac{1}{B^2} \left[ \sum_{b=1}^B \text{Var}(\hat{f}_b(\mathbf{x})) + \sum_{b=1}^B \sum_{b' \neq b}^B \text{Cov}(\hat{f}_b(\mathbf{x}), \hat{f}_{b'}(\mathbf{x})) \right]$$
+:::
+
+::: {.fragment}
+**Passo 3 — Aplicação da Hipótese de Independência ($\text{Cov} = 0$):**
+
+- $B$ termos de variância individual: $\sum_{b=1}^B \sigma^2 = B\sigma^2$.
+- $B(B - 1)$ termos de covariância: todos nulos sob independência ($= 0$).
+$$= \frac{1}{B^2}\left[ B\sigma^2 + 0 \right] = \frac{\sigma^2}{B} \quad \blacksquare$$
+:::
+
+:::
+
+## Bebendo da Mesma Fonte: Dependência Amostral
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+A demonstração anterior sugere um cenário tentador: bastaria treinar um número grande de modelos ($B \to \infty$) para que o erro de variância desaparecesse por completo. Contudo, em aprendizado de máquina supervisionado, **esse sonho assintótico não se concretiza**.
+
+### Por que os Modelos Não São Independentes?
+
+A hipótese de que $\text{Cov}(\hat{f}_b, \hat{f}_{b'}) = 0$ requer que cada modelo seja treinado em um conjunto de dados completamente novo e independente gerado pela natureza. No mundo real, o cientista de dados dispõe de **apenas uma única amostra finita** $\mathcal{D} = \{(\mathbf{x}_1, y_1), \dots, (\mathbf{x}_N, y_N)\}$.
+
+Quando aplicamos o Bagging, as réplicas $\mathcal{D}^{*1}, \dots, \mathcal{D}^{*B}$ são sintetizadas reamostrando com reposição desse mesmíssimo conjunto $\mathcal{D}$. Em outras palavras, todos os estimadores $\hat{f}_1, \dots, \hat{f}_B$ **bebem da mesma fonte**:
+1. **Compartilhamento de Dados:** Cada réplica bootstrap compartilha em média cerca de $63{,}2\%$ dos dados originais de $\mathcal{D}$.
+2. **Erros Correlacionados:** Se o conjunto $\mathcal{D}$ contiver ruídos locais, outliers ou correlações acidentais da amostra, **todas** as árvores enxergarão essas mesmas peculiaridades e tenderão a errar na mesma direção para as mesmas entradas.
+
+### A Consequência: $\text{Cov} \neq 0$ Gera Outra Fórmula
+
+Como os modelos bebem da mesma fonte, a covariância entre eles é estritamente positiva:
+$$\text{Cov}(\hat{f}_b(\mathbf{x}), \hat{f}_{b'}(\mathbf{x})) = \rho \sigma^2 > 0 \quad (\forall b \neq b')$$
+onde $\rho = \text{Corr}(\hat{f}_b, \hat{f}_{b'}) \in (0, 1)$ é a correlação média par-a-par entre os modelos.
+
+Quando $\text{Cov} \neq 0$, os $B(B - 1)$ termos cruzados da soma **não se anulam mais**! A variância do comitê passa a ser governada por uma fórmula diferente (cuja demonstração algébrica completa apresentamos no Bloco 1):
+$$\text{Var}(\bar{f}_B(\mathbf{x})) = \rho\sigma^2 + \frac{1 - \rho}{B}\sigma^2$$
+
+Tomando o limite assintótico $B \to \infty$:
+$$\lim_{B \to \infty} \text{Var}(\bar{f}_B(\mathbf{x})) = \rho\sigma^2 > 0$$
+
+> [!IMPORTANT]
+> **A Lição Central do Efeito Comitê:**
+> A média aritmética elimina com eficiência o ruído idiossincrático puramente individual de cada modelo (o termo $\frac{1-\rho}{B}\sigma^2 \to 0$). Porém, ela é **completamente impotente** diante da variação sistemática compartilhada pela fonte comum ($\rho\sigma^2$). O termo $\rho\sigma^2$ atua como um **piso intransponível de variância** (*variance floor*).
+>
+> Para avançar além do Bagging, não adianta apenas aumentar $B$: é indispensável **atacar a correlação $\rho$**. É dessa necessidade que nascem as Random Forests!
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+- **A Ilusão da Independência no Mundo Real:**
+  - Não existem infinitos conjuntos de dados da natureza: temos apenas **um** conjunto finito $\mathcal{D}$.
+  - As réplicas bootstrap são geradas reamostrando desse mesmo $\mathcal{D}$.
+  - Todos os modelos **bebem da mesma fonte** (compartilham $\approx 63{,}2\%$ dos mesmos dados).
+:::
+
+::: {.fragment}
+- **Por que $\text{Cov} \neq 0$ Muda Completamente o Resultado:**
+  - Peculiaridades e ruídos de $\mathcal{D}$ afetam todas as réplicas $\implies$ correlação positiva $\rho = \text{Corr}(T_b, T_{b'}) > 0$.
+  - Os $B(B-1)$ termos de covariância cruzada **não se anulam**!
+:::
+
+::: {.fragment}
+- **A Nova Fórmula e o Piso de Variância (*Variance Floor*):**
+  $$\text{Var}\left(\frac{1}{B}\sum_{b=1}^B T_b\right) = \rho\sigma^2 + \frac{1-\rho}{B}\sigma^2 \xrightarrow{B \to \infty} \rho\sigma^2$$
+  - A média zera o ruído individual ($1/B$), mas **preserva o erro comum da fonte** ($\rho\sigma^2$).
+  - **Próximo passo:** Para reduzir a variância além do Bagging, é preciso **atacar $\rho$** (Random Forests).
+:::
+
+:::
+
+## Por que Estimadores Lineares Não Ganham com Bagging
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Uma constatação empírica e teórica crucial (ESL §8.7 e §15.2) é que **nem todo algoritmo supervisionado se beneficia do Bagging**. 
+
+Estimadores estáveis e lineares nos dados, como a média amostral $\bar{X} = \frac{1}{N}\sum_{i=1}^N x_i$ ou a regressão linear por Mínimos Quadrados Ordinários (OLS), quase nada ganham ao serem submetidos ao bootstrap aggregation. De fato, a esperança da média bootstrap $\mathbb{E}_{*}\left[\bar{X}^*\right]$ é algebricamente idêntica à média da amostra original:
+
+$$\mathbb{E}_*\left[\frac{1}{N}\sum_{i=1}^N X_i^*\right] = \frac{1}{N}\sum_{i=1}^N \mathbb{E}_*[X_i^*] = \frac{1}{N}\sum_{i=1}^N \bar{X} = \bar{X}$$
+
+A correlação par-a-par entre estimativas OLS ajustadas em réplicas bootstrap de uma mesma amostra gira em torno de $\rho \approx 0{,}50$ (exercício 15.4 do ESL), fazendo com que a média do ensemble produza praticamente o mesmo hiperplano que o OLS treinado uma única vez.
+
+Em contrapartida, árvores de decisão são **altamente não lineares e estruturalmente instáveis**:
+- Um corte ligeiramente deslocado no nó raiz altera todos os nós descendentes.
+- Essa instabilidade faz com que cada árvore explore regiões e combinações geométricas distintas do espaço de atributos.
+- O Bagging atua como uma operação de suavização (*smoothing*), transformando as fronteiras rígidas em degraus de uma única árvore em superfícies suaves e contínuas de probabilidade e regressão.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+- **Modelos Estáveis (OLS, Média Amostral, Regressão Ridge):**
+  - Pequenas permutações nos dados quase não movem os coeficientes.
+  - Correlação bootstrap elevada ($\rho \approx 0{,}50$).
+  - O Bagging de retas OLS produz essencialmente a mesma reta OLS original.
+:::
+
+::: {.fragment}
+- **Modelos Instáveis (Árvores CART não podadas):**
+  - Altamente sensíveis: alterar um único ponto de treino pode mudar o corte da raiz.
+  - O Bagging opera como um operador de regularização por suavização (*smoothing*):
+    - Transforma partições retangulares rígidas em superfícies de decisão contínuas.
+:::
+:::
+
+## O Mecanismo em Diagrama: Da Amostragem à Decisão
+
+::: {.fig-resize style="width: 85%; margin: 0 auto;"}
+```{.tikz}
+\definecolor{instblue}{RGB}{43, 92, 143}
+\definecolor{instorange}{RGB}{217, 95, 2}
+\definecolor{instgreen}{RGB}{27, 158, 119}
+\definecolor{softblue}{RGB}{240, 244, 250}
+\definecolor{softorange}{RGB}{254, 245, 238}
+\definecolor{softgreen}{RGB}{238, 250, 245}
+
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc}
+\begin{tikzpicture}[
+    font=\sffamily,
+    >=Latex,
+    boxdata/.style={
+        rectangle, rounded corners=5pt,
+        draw=instblue, fill=softblue, line width=1.2pt,
+        minimum height=1.05cm, minimum width=7.2cm,
+        align=center, font=\small\sffamily
+    },
+    boxboot/.style={
+        rectangle, rounded corners=4pt,
+        draw=instblue!70, fill=white, line width=0.9pt,
+        minimum height=1.05cm, minimum width=2.8cm,
+        align=center, font=\footnotesize\sffamily
+    },
+    boxtree/.style={
+        rectangle, rounded corners=4pt,
+        draw=instorange, fill=softorange, line width=1pt,
+        minimum height=1.15cm, minimum width=2.8cm,
+        align=center, font=\footnotesize\sffamily
+    },
+    boxagg/.style={
+        rectangle, rounded corners=6pt,
+        draw=instgreen, fill=softgreen, line width=1.3pt,
+        minimum height=1.3cm, minimum width=11.6cm,
+        align=center, font=\small\sffamily
+    },
+    arrowblue/.style={->, line width=1pt, color=instblue},
+    arroworange/.style={->, line width=1pt, color=instorange},
+    arrowgreen/.style={->, line width=1pt, color=instgreen},
+    tag/.style={font=\scriptsize\sffamily, fill=white, inner sep=2pt, rounded corners=2pt, draw=black!15}
+]
+
+% 1. Conjunto Original (Topo)
+\node[boxdata] (D) at (0, 4.4) {
+    \textbf{Conjunto de Treinamento Original} $\mathcal{D}$\\
+    \footnotesize $N$ observações, $p$ atributos preditores
+};
+
+% 2. Amostras Bootstrap (Nível 2)
+\node[boxboot] (D1) at (-4.4, 2.3) {
+    \textbf{Bootstrap} $\mathcal{D}^{*1}$\\
+    \scriptsize $N$ amostras com reposição
+};
+\node[boxboot] (D2) at (-1.5, 2.3) {
+    \textbf{Bootstrap} $\mathcal{D}^{*2}$\\
+    \scriptsize $N$ amostras com reposição
+};
+\node at (1.45, 2.3) {\Large$\cdots$};
+\node[boxboot] (DB) at (4.4, 2.3) {
+    \textbf{Bootstrap} $\mathcal{D}^{*B}$\\
+    \scriptsize $N$ amostras com reposição
+};
+
+% 3. Modelos Base / Árvores (Nível 3)
+\node[boxtree] (T1) at (-4.4, 0.1) {
+    \textbf{Árvore Base} $T_1(\mathbf{x})$\\
+    \scriptsize CART profunda não podada\\
+    \tiny\color{instorange!90!black}(RF: $m < p$ atributos por nó)
+};
+\node[boxtree] (T2) at (-1.5, 0.1) {
+    \textbf{Árvore Base} $T_2(\mathbf{x})$\\
+    \scriptsize CART profunda não podada\\
+    \tiny\color{instorange!90!black}(RF: $m < p$ atributos por nó)
+};
+\node at (1.45, 0.1) {\Large$\cdots$};
+\node[boxtree] (TB) at (4.4, 0.1) {
+    \textbf{Árvore Base} $T_B(\mathbf{x})$\\
+    \scriptsize CART profunda não podada\\
+    \tiny\color{instorange!90!black}(RF: $m < p$ atributos por nó)
+};
+
+% 4. Decisão Agregada (Nível 4)
+\node[boxagg] (AGG) at (0, -2.1) {
+    \textbf{Predição Agregada do Ensemble} $\hat{f}_{\mathrm{ens}}(\mathbf{x})$\\[2pt]
+    \footnotesize
+    \textbf{Regressão:} $\frac{1}{B}\sum_{b=1}^B T_b(\mathbf{x})$ \quad\textbullet\quad
+    \textbf{Classificação:} $\arg\max_k \sum_{b=1}^B I(C_b(\mathbf{x}) = k)$\\[2pt]
+    \scriptsize\bfseries\color{instgreen!80!black}
+    Variância Reduzida: $\mathrm{Var} \to \rho\sigma^2 + \frac{1-\rho}{B}\sigma^2 \xrightarrow{B \to \infty} \rho\sigma^2$
+};
+
+% Barramento de Distribuição (Topo -> Nível 2)
+\draw[line width=1pt, color=instblue] (D.south) -- (0, 3.45);
+\draw[line width=1pt, color=instblue] (-4.4, 3.45) -- (4.4, 3.45);
+\node[tag, text=instblue] at (0, 3.7) {Amostragem com Reposição ($\approx 63{,}2\%$ dados únicos)};
+
+\draw[arrowblue] (-4.4, 3.45) -- (D1.north);
+\draw[arrowblue] (-1.5, 3.45) -- (D2.north);
+\draw[arrowblue] (4.4, 3.45) -- (DB.north);
+
+% Conexões Nível 2 -> Nível 3 (Ajuste das Árvores)
+\draw[arroworange] (D1.south) -- node[tag, text=instorange!90!black] {Ajuste CART} (T1.north);
+\draw[arroworange] (D2.south) -- node[tag, text=instorange!90!black] {Ajuste CART} (T2.north);
+\draw[arroworange] (DB.south) -- node[tag, text=instorange!90!black] {Ajuste CART} (TB.north);
+
+% Conexões Nível 3 -> Nível 4 (Predições Individuais -> Agregação)
+\draw[arrowgreen] (T1.south) -- node[tag, text=instgreen!80!black] {Predição $\hat{y}_1$} (T1.south |- AGG.north);
+\draw[arrowgreen] (T2.south) -- node[tag, text=instgreen!80!black] {Predição $\hat{y}_2$} (T2.south |- AGG.north);
+\draw[arrowgreen] (TB.south) -- node[tag, text=instgreen!80!black] {Predição $\hat{y}_B$} (TB.south |- AGG.north);
+
+\end{tikzpicture}
+```
+:::
+
+## Pausa 2: Perturbação de Dados e Estabilidade
+
+::: {.callout-tip}
+## O Experimento dos Modelos Estáveis
+Considere dois algoritmos supervisionados: um classificador vizinhos mais próximos com $k = 1$ ($1$-NN) e um classificador linear por Análise Discriminante Linear (LDA) com matriz de covariância compartilhada. Em qual dos dois algoritmos você espera que o Bagging produza a redução de erro de generalização mais expressiva?
+:::
+
+::: {.callout-tip}
+## V ou F: Propriedades da Estabilidade
+Julgue V ou F — a questão só conta se acertar os 4 itens:
+
+- □ Estimadores lineares como Mínimos Quadrados Ordinários exibem grande ganho preditivo sob Bagging porque sua variância original é muito elevada.
+- □ O classificador $1$-NN é instável a pequenas perturbações nas fronteiras de dados, sendo um forte candidato a se beneficiar do agregamento por bootstrap.
+- □ A operação de agregação por média do Bagging reduz a descontinuidade das fronteiras de decisão geradas por árvores CART.
+- □ Se os erros de predição de todos os modelos base forem perfeitamente correlacionados ($\rho = 1$), a variância do ensemble será idêntica à variância de um único modelo base.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Pausa Ativa 2: Resposta
+
+::: {.callout-tip}
+## V ou F: Resposta
+- ✗ **F:** OLS é um estimador linear estável; sua correlação bootstrap é alta ($\approx 0{,}5$) e o Bagging praticamente reproduz o estimador original.
+- ✔ **V:** $1$-NN cria fronteiras de Voronoi extremamente sensíveis à posição de pontos isolados; a média suaviza essas fronteiras.
+- ✔ **V:** A média de funções em degrau ortogonais gera superfícies de probabilidade suaves e contínuas.
+- ✔ **V:** Substituindo $\rho = 1$ na fórmula da variância, $\text{Var}(\bar{T}) = 1 \cdot \sigma^2 + 0 = \sigma^2$.
+:::
+
+::: {.fragment}
+**Voltando à pergunta:** O classificador **$1$-NN** terá o maior benefício. O $1$-NN é o exemplo arquetípico de estimador não paramétrico de variância massiva e baixo viés (seus limites de decisão formam células de Voronoi fragmentadas). O LDA, por sua vez, assume normalidade com covariância comum, gerando uma fronteira linear extremamente estável que ganha quase nada com o Bagging.
+:::
+:::
+
+# Bloco 1: Bagging e a Teoria Estatística da Média de Estimadores
+
+## O Princípio do Bootstrap: De Efron (1979) a Breiman (1996)
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Antes de definir formalmente o algoritmo de Bagging, é fundamental compreender a ferramenta probabilística sobre a qual todo o método se apoia: o **Bootstrap não paramétrico**, introduzido pelo estatístico Bradley Efron em 1979.
+
+O nome faz alusão à expressão em inglês *"to pull oneself up by one's own bootstraps"* (famosa na lenda das aventuras do Barão de Münchhausen, que afirmava ter conseguido se retirar de um atoleiro puxando os próprios cadarços de sua bota). Em inferência estatística, a metáfora traduz uma ambição análoga: como podemos avaliar a incerteza e a variabilidade de um estimador usando **apenas a própria amostra de dados disponível**, sem recorrer a novas coletas nem assumir distribuições paramétricas teóricas irrealistas?
+
+### O Princípio do Plug-in de Efron
+
+Suponha que dispomos de uma amostra de treinamento $Z = \{\mathbf{z}_1, \dots, \mathbf{z}_N\}$, onde cada $\mathbf{z}_i = (\mathbf{x}_i, y_i)$ foi gerado independentemente a partir de uma distribuição populacional verdadeira, porém desconhecida, $P$.
+
+Idealmente, para medir a variância de um estimador $\hat{\theta} = g(Z)$, gostaríamos de repetir o experimento da natureza sorteando centenas de novos conjuntos de treino de tamanho $N$ diretamente de $P$. Como isso é impraticável na vida real, a ideia revolucionária de Efron foi aplicar o **Princípio do Plug-in**:
+- Substituímos a distribuição populacional desconhecida $P$ pela **distribuição empírica** $\hat{P}_N$, definida como a probabilidade discreta uniforme que coloca massa $1/N$ em cada observação realizada:
+  $$\hat{P}_N(A) = \frac{1}{N} \sum_{i=1}^N \mathbb{I}(\mathbf{z}_i \in A)$$
+- Em vez de reamostrar da natureza $P$, **reamostramos da distribuição empírica $\hat{P}_N$**.
+
+### O Mecanismo da Reamostragem com Reposição
+
+Sortear da distribuição empírica $\hat{P}_N$ equivale operacionalmente a realizar uma **amostragem com reposição de tamanho $N$** a partir da amostra original $Z$:
+1. A cada passo, sorteamos um ponto $\mathbf{z}_i \in Z$ com probabilidade uniforme $1/N$.
+2. Registramos o ponto na nova réplica $Z^*$.
+3. **Devolvemos o ponto à urna**, de modo que ele permanece elegível para ser sorteado novamente nos sorteios seguintes.
+4. Repetimos o processo exatamente $N$ vezes, obtendo a réplica bootstrap $Z^* = \{\mathbf{z}_1^*, \dots, \mathbf{z}_N^*\}$.
+
+A reposição é o coração do algoritmo:
+- Se a amostragem fosse realizada *sem reposição*, cada amostra $Z^*$ conteria exatamente os mesmos $N$ elementos originais (seria apenas uma permutação da ordem dos dados), gerando exatamente o mesmo estimador.
+- **Com reposição**, criamos uma combinatória rica: algumas observações aparecem duplicadas, triplicadas ou multiplicadas, enquanto cerca de $36{,}8\%$ das observações originais ficam completamente de fora da amostra (o conjunto *Out-of-Bag*, que deduziremos formalmente no Bloco 3).
+
+### O Salto de Breiman (1996): Do Diagnóstico ao Tratamento
+
+Originalmente, Efron concebeu o bootstrap para fins de **inferência descritiva**: avaliar a precisão de um estimador $\hat{\theta}$ calculando a variância amostral de réplicas $\hat{\theta}^{*1}, \dots, \hat{\theta}^{*B}$.
+
+Dezessete anos depois, Leo Breiman (1996) teve uma percepção que transformou o aprendizado de máquina:
+> *"Se temos um estimador instável com alta variância (como uma árvore CART), por que usar o bootstrap apenas para lamentar que sua variância é grande? Por que não treinar um preditor em cada amostra bootstrap e agregar suas predições pela média para **reduzir ativamente** essa variância?"*
+
+Esse casamento entre **Bootstrap** e **Aggregating** gerou o termo e o método que definimos formalmente a seguir: **Bagging**.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+- **O Problema da Inferência (Efron, 1979):**
+  - Queremos avaliar a variabilidade de um modelo, mas a natureza nos deu apenas **uma** amostra finita $\mathcal{D}$.
+  - Não podemos voltar à população $P$ para coletar novos dados.
+:::
+
+::: {.fragment}
+- **O Princípio do *Plug-in*:**
+  - Substituir a população desconhecida $P$ pela **distribuição empírica** $\hat{P}_N$ (massa $1/N$ em cada ponto observado).
+  - Simular novos dados sorteando $N$ pontos **com reposição** a partir de $\mathcal{D}$:
+    $$\mathcal{D}^{*b} = \{(\mathbf{x}_i^*, y_i^*)\}_{i=1}^N \sim \hat{P}_N$$
+  - *Com reposição:* alguns dados se repetem; $\approx 36{,}8\%$ ficam de fora (*Out-of-Bag*).
+:::
+
+::: {.fragment}
+- **A Virada de Leo Breiman (1996):**
+  - Efron usou o bootstrap para **medir** a variância do estimador.
+  - Breiman usou o bootstrap para **destruir** a variância: treinar um modelo em cada réplica e calcular a média.
+  - Nasce o **Bagging**: $\textbf{B}$ootstrap $\textbf{Agg}$regat$\textbf{ing}$.
+:::
+
+:::
+
+## Definição Formal do Estimador Bagging
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Formalizamos o procedimento de **Bootstrap Aggregation** (Bagging) proposto por Breiman (1996) e detalhado em ESL §8.7.
+
+Seja $Z = \{(\mathbf{x}_1, y_1), \dots, (\mathbf{x}_N, y_N)\}$ o conjunto de dados de treinamento com $N$ pares observados independentes e identicamente distribuídos a partir de uma distribuição desconhecida $P(X, Y)$. Seja $\hat{f}(\mathbf{x}) = \hat{f}(\mathbf{x}; Z)$ o preditor ajustado aos dados $Z$.
+
+::: {.callout-note icon=false}
+## Definição (Estimador Bagging; ESL §8.7, p. 282)
+Denotamos por $\hat{P}_N$ a distribuição empírica que atribui probabilidade uniforme $1/N$ a cada ponto de dado observado $(\mathbf{x}_i, y_i) \in Z$. Uma amostra bootstrap $Z^{*b}$ de tamanho $N$ é obtida sorteando observações de $Z$ com reposição de acordo com $\hat{P}_N$.
+
+Para cada réplica bootstrap $Z^{*b}$, $b = 1, \dots, B$, ajustamos o estimador base, obtendo a função preditora $\hat{f}^{*b}(\mathbf{x}) = \hat{f}(\mathbf{x}; Z^{*b})$. 
+
+O **estimador Bagging finito** é definido pela média aritmética:
+$$\hat{f}_{\text{bag}}(\mathbf{x}) = \frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(\mathbf{x})$$
+
+O **estimador Bagging ideal (populacional)** é o valor esperado sob a distribuição empírica $\hat{P}_N$:
+$$\hat{f}_{\text{bag}}^{\infty}(\mathbf{x}) = \mathbb{E}_{\hat{P}_N}\left[\hat{f}^*(\mathbf{x})\right] = \lim_{B \to \infty} \frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(\mathbf{x})$$
+:::
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Algoritmo de Bagging em Regressão
+1. Para cada $b = 1, \dots, B$:
+   - Extrair amostra bootstrap $Z^{*b}$ de tamanho $N$ com reposição a partir de $Z$.
+   - Ajustar o modelo base não podado: $\hat{f}^{*b}(\mathbf{x}) = \hat{f}(\mathbf{x}; Z^{*b})$.
+2. Agregação Final:
+   $$\hat{f}_{\text{bag}}(\mathbf{x}) = \frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(\mathbf{x})$$
+:::
+
+- **Classificação:** Se $\hat{C}^{*b}(\mathbf{x}) \in \{1, \dots, K\}$ for a classe predita pelo modelo $b$, o voto majoritário determina a predição final:
+  $$\hat{C}_{\text{bag}}(\mathbf{x}) = \arg\max_{k} \sum_{b=1}^B \mathbb{I}(\hat{C}^{*b}(\mathbf{x}) = k)$$
+:::
+
+## O Viés Não é Reduzido: Demonstração Formal
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Um erro conceitual recorrente é supor que agregar modelos por média ajuda a corrigir predições incorretas de forma a diminuir o viés do estimador. Demonstramos formalmente que o viés de $\hat{f}_{\text{bag}}$ é idêntico ao viés esperado de uma única árvore bootstrap:
+
+::: {.callout-note icon=false}
+## Teorema (Preservação do Viés no Bagging; ESL §15.2, p. 588)
+Seja $Z$ uma amostra de treino e sejam $Z^{*1}, \dots, Z^{*B}$ amostras bootstrap geradas a partir de $Z$. Suponha que cada estimador $\hat{f}^{*b}(\mathbf{x}) = \hat{f}(\mathbf{x}; Z^{*b})$ seja identicamente distribuído sob a distribuição de amostragem conjunta da natureza e do bootstrap. Então:
+$$\mathbb{E}_{\mathcal{D}}\left[\hat{f}_{\text{bag}}(\mathbf{x})\right] = \mathbb{E}_{\mathcal{D}}\left[\hat{f}^*(\mathbf{x})\right]$$
+e o viés do estimador Bagging é rigorosamente igual ao viés de uma árvore bootstrap individual:
+$$\text{Bias}(\hat{f}_{\text{bag}}(\mathbf{x})) = \text{Bias}(\hat{f}^*(\mathbf{x}))$$
+:::
+
+**Demonstração:**
+Por definição, o viés do estimador Bagging em relação ao valor verdadeiro da função de regressão $f(\mathbf{x}) = \mathbb{E}[Y \mid X = \mathbf{x}]$ é dado por:
+
+$$\text{Bias}(\hat{f}_{\text{bag}}(\mathbf{x})) = \mathbb{E}_{\mathcal{D}}\left[\hat{f}_{\text{bag}}(\mathbf{x})\right] - f(\mathbf{x})$$
+
+Substituindo a definição da média finita de Bagging:
+
+$$\mathbb{E}_{\mathcal{D}}\left[\hat{f}_{\text{bag}}(\mathbf{x})\right] = \mathbb{E}_{\mathcal{D}}\left[\frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(\mathbf{x})\right]$$
+
+Pela linearidade da esperança matemática:
+
+$$\mathbb{E}_{\mathcal{D}}\left[\frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(\mathbf{x})\right] = \frac{1}{B} \sum_{b=1}^B \mathbb{E}_{\mathcal{D}}\left[\hat{f}^{*b}(\mathbf{x})\right]$$
+
+Como todas as réplicas bootstrap $Z^{*b}$ são extraídas sob o mesmo processo estocástico identicamente distribuído ($\hat{P}_N$ condicionada a $Z$), cada árvore $\hat{f}^{*b}(\mathbf{x})$ possui rigorosamente a mesma esperança marginal: $\mathbb{E}_{\mathcal{D}}[\hat{f}^{*b}(\mathbf{x})] = \mathbb{E}_{\mathcal{D}}[\hat{f}^*(\mathbf{x})]$. Portanto:
+
+$$\frac{1}{B} \sum_{b=1}^B \mathbb{E}_{\mathcal{D}}\left[\hat{f}^{*b}(\mathbf{x})\right] = \frac{1}{B} \cdot B \cdot \mathbb{E}_{\mathcal{D}}\left[\hat{f}^*(\mathbf{x})\right] = \mathbb{E}_{\mathcal{D}}\left[\hat{f}^*(\mathbf{x})\right]$$
+
+Subtraindo $f(\mathbf{x})$ em ambos os lados, concluímos que:
+
+$$\text{Bias}(\hat{f}_{\text{bag}}(\mathbf{x})) = \mathbb{E}_{\mathcal{D}}\left[\hat{f}^*(\mathbf{x})\right] - f(\mathbf{x}) = \text{Bias}(\hat{f}^*(\mathbf{x})) \quad \blacksquare$$
+
+Na prática, o viés de $\hat{f}^*(\mathbf{x})$ chega a ser ligeiramente superior ao viés da árvore treinada na amostra plena original $Z$, pois uma amostra bootstrap contém em média apenas cerca de $63{,}2\%$ das observações únicas de $Z$ (o restante são duplicatas), o que reduz ligeiramente o tamanho efetivo de treino. Logo, **o Bagging nunca atua na redução de viés**. Todo o ganho preditivo provém exclusivamente da redução de variância.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Teorema da Preservação do Viés
+$$\text{Bias}(\hat{f}_{\text{bag}}(\mathbf{x})) = \text{Bias}(\hat{f}^*(\mathbf{x}))$$
+:::
+
+::: {.fragment}
+**Passo 1 — Definição da Esperança do Ensemble:**
+$$\mathbb{E}\left[\hat{f}_{\text{bag}}(\mathbf{x})\right] = \mathbb{E}\left[\frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(\mathbf{x})\right]$$
+:::
+
+::: {.fragment}
+**Passo 2 — Linearidade da Esperança:**
+$$= \frac{1}{B} \sum_{b=1}^B \mathbb{E}\left[\hat{f}^{*b}(\mathbf{x})\right]$$
+:::
+
+::: {.fragment}
+**Passo 3 — Distribuição Idêntica dos Modelos Base:**
+Como cada $\hat{f}^{*b}$ é identicamente distribuído com esperança $\mathbb{E}[\hat{f}^*]$:
+$$= \frac{1}{B} \cdot B \cdot \mathbb{E}\left[\hat{f}^*(\mathbf{x})\right] = \mathbb{E}\left[\hat{f}^*(\mathbf{x})\right]$$
+:::
+
+::: {.fragment .callout-important}
+## Conclusão Fundamental
+O Bagging é matematicamente incapaz de reduzir o viés. Se os modelos base forem enviesados, o ensemble permanecerá igualmente enviesado.
+:::
+:::
+
+## Teorema da Variância de Variáveis Correlacionadas
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Apresentamos agora a derivação completa do resultado central que governa o comportamento estatístico de ensembles por agregação, demonstrando como a correlação entre os modelos atua na variância final.
+
+::: {.callout-note icon=false}
+## Teorema (Variância da Média de Variáveis Correlacionadas; ESL §15.2, eq. 15.1, p. 588)
+Sejam $T_1, \dots, T_B$ variáveis aleatórias identicamente distribuídas (i.d.), não necessariamente independentes, cada uma com variância $\text{Var}(T_b) = \sigma^2$, e com correlação par-a-par positiva constante $\text{Corr}(T_b, T_{b'}) = \rho$ para todo $b \neq b'$. 
+
+A variância da média amostral $\bar{T} = \frac{1}{B}\sum_{b=1}^B T_b$ é dada analiticamente por:
+$$\text{Var}(\bar{T}) = \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2$$
+:::
+
+**Demonstração:**
+Por definição das propriedades da variância da soma de variáveis aleatórias:
+
+$$\text{Var}(\bar{T}) = \text{Var}\left(\frac{1}{B} \sum_{b=1}^B T_b\right) = \frac{1}{B^2} \text{Var}\left(\sum_{b=1}^B T_b\right)$$
+
+Expandindo a variância da soma na soma das variâncias individuais mais todas as covariâncias cruzadas par-a-par:
+
+$$\text{Var}\left(\sum_{b=1}^B T_b\right) = \sum_{b=1}^B \text{Var}(T_b) + \sum_{b=1}^B \sum_{b' \neq b} \text{Cov}(T_b, T_{b'})$$
+
+Como cada variável possui variância idêntica $\text{Var}(T_b) = \sigma^2$, a primeira somatória contém exatamente $B$ termos iguais a $\sigma^2$:
+
+$$\sum_{b=1}^B \text{Var}(T_b) = B \sigma^2$$
+
+Para a segunda somatória, o número de pares ordenados distintos $(b, b')$ com $b \neq b'$ em um conjunto de tamanho $B$ é dado por $B(B - 1)$. 
+
+Lembrando que a correlação linear é definida por $\rho = \frac{\text{Cov}(T_b, T_{b'})}{\sqrt{\text{Var}(T_b)\text{Var}(T_{b'})}} = \frac{\text{Cov}(T_b, T_{b'})}{\sigma^2}$, temos que:
+
+$$\text{Cov}(T_b, T_{b'}) = \rho \sigma^2 \quad (\forall b \neq b')$$
+
+Substituindo a covariância constante na segunda somatória:
+
+$$\sum_{b=1}^B \sum_{b' \neq b} \text{Cov}(T_b, T_{b'}) = B(B - 1) \rho \sigma^2$$
+
+Reunindo os dois termos:
+
+$$\text{Var}\left(\sum_{b=1}^B T_b\right) = B \sigma^2 + B(B - 1)\rho \sigma^2$$
+
+Dividindo toda a expressão por $B^2$:
+
+$$\text{Var}(\bar{T}) = \frac{B \sigma^2 + B(B - 1)\rho \sigma^2}{B^2} = \frac{\sigma^2}{B} + \frac{B - 1}{B} \rho \sigma^2$$
+
+Reescrevendo a fração $\frac{B - 1}{B}$ como $\left(1 - \frac{1}{B}\right)$:
+
+$$\text{Var}(\bar{T}) = \frac{\sigma^2}{B} + \rho \sigma^2 - \frac{\rho \sigma^2}{B}$$
+
+Agrupando os termos que contêm o denominador $B$:
+
+$$\text{Var}(\bar{T}) = \rho \sigma^2 + \frac{(1 - \rho)\sigma^2}{B} = \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2 \quad \blacksquare$$
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Equação Fundamental (ESL eq. 15.1)
+$$\text{Var}\left(\frac{1}{B}\sum_{b=1}^B T_b\right) = \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2$$
+:::
+
+::: {.fragment}
+**Passo 1 — Expansão da Variância da Soma:**
+$$\text{Var}\left(\frac{1}{B}\sum_{b=1}^B T_b\right) = \frac{1}{B^2} \left[ \sum_{b=1}^B \text{Var}(T_b) + \sum_{b=1}^B \sum_{b' \neq b} \text{Cov}(T_b, T_{b'}) \right]$$
+:::
+
+::: {.fragment}
+**Passo 2 — Contagem dos Termos:**
+
+- $B$ termos de variância individual: $\sum_{b=1}^B \sigma^2 = B \sigma^2$.
+- $B(B - 1)$ termos de covariância: $\sum_{b \neq b'} \rho \sigma^2 = B(B - 1)\rho \sigma^2$.
+:::
+
+::: {.fragment}
+**Passo 3 — Álgebra e Decomposição dos Termos:**
+$$= \frac{B \sigma^2 + B(B - 1)\rho \sigma^2}{B^2} = \frac{\sigma^2}{B} + \left(1 - \frac{1}{B}\right)\rho \sigma^2$$
+$$= \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2 \quad \blacksquare$$
+:::
+:::
+
+## O Gargalo Fundamental do Bagging: A Correlação $\rho$
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+A equação $\text{Var}(\bar{T}) = \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2$ revela imediatamente os limites e as propriedades assintóticas do Bagging:
+
+1. **Quando $B = 1$:** $\text{Var}(\bar{T}) = \rho \sigma^2 + (1 - \rho)\sigma^2 = \sigma^2$ (a variância de uma única árvore individual).
+2. **Quando $B \to \infty$:** O segundo termo decai a zero ($\lim_{B \to \infty} \frac{1 - \rho}{B}\sigma^2 = 0$), mas o primeiro termo **permanece inalterado**:
+   $$\lim_{B \to \infty} \text{Var}(\bar{T}) = \rho \sigma^2$$
+
+Isso significa que mesmo que treinemos $B = 100.000$ árvores no ensemble, a variância jamais cairá abaixo de $\rho \sigma^2$. A correlação $\rho$ entre os preditores atua como uma barreira intransponível. 
+
+No Bagging convencional com árvores de decisão, como todas as árvores têm acesso a todas as $p$ variáveis em todas as divisões, os atributos mais fortes (como `MedInc` no *California Housing*) serão quase invariavelmente selecionados no nó raiz e nas primeiras bifurcações de quase todas as árvores. Consequentemente, as árvores tornam-se estruturalmente semelhantes entre si, induzindo valores elevados de $\rho$ (frequentemente $\rho > 0{,}70$).
+
+O gráfico a seguir exibe o comportamento analítico da variância em função de $B$ para diferentes níveis de correlação $\rho \in \{0{,}1, 0{,}3, 0{,}6, 0{,}9\}$ assumindo $\sigma^2 = 1{,}0$:
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+- **Limite com $B \to \infty$:**
+  $$\lim_{B \to \infty} \text{Var}(\bar{T}) = \rho \sigma^2$$
+:::
+
+::: {.fragment}
+- **Diagnóstico Teórico:**
+  - Adicionar mais árvores ($B \uparrow$) elimina o ruído amostral individual ($\frac{1-\rho}{B}\sigma^2$).
+  - Porém, **não consegue alterar o piso $\rho \sigma^2$**.
+:::
+
+::: {.fragment}
+- **A Patologia do Bagging Puro:**
+  - Todas as árvores escolhem o atributo mais forte na raiz (`MedInc`).
+  - As árvores tornam-se "gêmeas estruturais", mantendo $\rho \approx 0{,}70$.
+  - Para reduzir o erro além desse patamar, precisamos de um mecanismo para **derrubar $\rho$**.
+:::
+:::
+
+::: {.fig-resize style="width: 75%; margin: 0 auto;"}
+```{python}
+#| echo: false
+fig, ax = plt.subplots(figsize=(6.5, 3.8))
+B_curve = np.arange(1, 101)
+sigma_sq = 1.0
+
+for rho_val, cor in zip([0.1, 0.3, 0.6, 0.9], [COR_VERDE, COR_A, COR_NEU, COR_B]):
+    var_curve = rho_val * sigma_sq + (1 - rho_val) * sigma_sq / B_curve
+    ax.plot(B_curve, var_curve, color=cor, linewidth=2, label=f"$\\rho = {rho_val}$ (Piso = {rho_val:.1f})")
+    ax.axhline(rho_val * sigma_sq, color=cor, linestyle=":", alpha=0.6)
+
+ax.set_title("Variância do Ensemble vs. Número de Árvores (B)")
+ax.set_xlabel("Número de Modelos no Ensemble (B)")
+ax.set_ylabel("Variância do Estimador Médio")
+ax.set_ylim(0.0, 1.05)
+ax.legend(loc="upper right")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+## Pausa 3: O Teto da Variância e o Número de Árvores
+
+::: {.callout-tip}
+## O Custo Computacional do Ensemble
+Um engenheiro de infraestrutura nota que treinar $B = 50$ árvores reduziu o MSE de $0{,}60$ para $0{,}32$. Ele propõe alocar mais servidores para rodar $B = 5.000$ árvores na esperança de reduzir o MSE para perto de zero. Avalie se esse investimento se justifica com base na fórmula da variância correlacionada.
+:::
+
+::: {.callout-tip}
+## V ou F: Propriedades da Variância Correlacionada
+Julgue V ou F — a questão só conta se acertar os 4 itens:
+
+- □ Se a correlação par-a-par $\rho$ entre as árvores for estritamente nula ($\rho = 0$), a variância do ensemble converge a zero quando $B \to \infty$.
+- □ Dobrar o número de árvores de $B = 100$ para $B = 200$ reduzirá a variância do ensemble pela metade, independentemente do valor de $\rho$.
+- □ O valor mínimo teórico que a variância de um ensemble Bagging pode atingir quando $B \to \infty$ é delimitado pelo produto $\rho \sigma^2$.
+- □ Adicionar árvores a um modelo Random Forest pode aumentar o viés do estimador se $B$ for excessivamente grande.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Pausa Ativa 3: Resposta
+
+::: {.callout-tip}
+## V ou F: Resposta
+- ✔ **V:** Se $\rho = 0$, a fórmula se reduz a $\frac{\sigma^2}{B}$, cuja variância assintótica é zero.
+- ✗ **F:** Apenas a parcela $\frac{1-\rho}{B}\sigma^2$ é dividida por $2$; a parcela $\rho \sigma^2$ permanece inalterada.
+- ✔ **V:** O termo residual não nulo quando $B \to \infty$ é exatamente $\rho \sigma^2$.
+- ✗ **F:** O viés independe de $B$ e permanece constante ($\mathbb{E}[\hat{f}_{\text{RF}}] = \mathbb{E}[T]$).
+:::
+
+::: {.fragment}
+**Voltando à pergunta:** O investimento é injustificável. Com $B = 50$, o termo decrescente $\frac{1-\rho}{50}\sigma^2$ já foi em grande parte exaurido. Para $B = 5.000$, o erro convergirá para o patamar assintótico $\rho \sigma^2$ (que é estritamente positivo devido à correlação induzida pelo dataset compartilhado), trazendo ganhos marginais desprezíveis a um custo computacional 100 vezes maior.
+:::
+:::
+
+# Bloco 2: Florestas Aleatórias (Random Forests) e a Quebra da Correlação
+
+## O Algoritmo de Breiman (2001) e a Aleatoriedade Dupla
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Se o gargalo intransponível do Bagging reside na correlação $\rho$, como podemos reduzir $\rho$ sem precisar de dados novos da natureza?
+
+A resposta brilhante de Leo Breiman (2001) foi a introdução das **Florestas Aleatórias (Random Forests)**. A ideia mestra consiste em forçar a descorrelação entre as árvores através de uma **injeção deliberada de aleatoriedade no processo de construção de cada nó da árvore**:
+
+::: {.callout-note icon=false}
+## Algoritmo 15.1 (Random Forest para Regressão ou Classificação; ESL §15.2, p. 588)
+1. Para cada $b = 1, \dots, B$:
+   a. Extrair uma amostra bootstrap $Z^{*b}$ de tamanho $N$ com reposição a partir dos dados de treinamento $Z$.
+   b. Construir uma árvore de decisão $T_b$ sobre a amostra $Z^{*b}$, repetindo recursivamente as seguintes etapas para cada nó terminal até atingir o critério de parada ($n_{\min}$):
+      i. Sortear aleatoriamente $m$ variáveis candidatas a partir do total de $p$ variáveis preditoras ($m \le p$).
+      ii. Determinar a melhor variável de corte e o melhor ponto de divisão $s$ **estritamente dentre as $m$ variáveis sorteadas**.
+      iii. Particionar o nó em dois nós filhos de acordo com a divisão ótima encontrada.
+2. Saída do Ensemble:
+   - **Regressão:** $\hat{f}_{\text{rf}}^B(\mathbf{x}) = \frac{1}{B} \sum_{b=1}^B T_b(\mathbf{x})$.
+   - **Classificação:** Voto majoritário das classes preditas $\{\hat{C}_b(\mathbf{x})\}_{b=1}^B$.
+:::
+
+A grande novidade estrutural reside no passo **1.b.i**: a escolha aleatória de $m$ preditores ocorre **em cada nó de cada árvore**, e não apenas uma vez no início da árvore.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Algoritmo de Breiman (2001)
+
+Em cada árvore $b = 1, \dots, B$:
+
+1. **Nível da Amostra:** Extrair réplica bootstrap $\mathcal{D}^{*b}$ de tamanho $N$.
+2. **Nível do Nó:** Em **cada bifurcação**, selecionar aleatoriamente um subconjunto de $m \le p$ variáveis preditoras candidatas.
+3. Escolher o melhor corte apenas entre as $m$ variáveis selecionadas.
+4. Expandir a árvore até nós terminais profundos (sem poda).
+:::
+
+::: {.fragment}
+- **O Objetivo Analítico:**
+  - Impedir que variáveis hegemônicas dominem todas as árvores.
+  - Derrubar violentamente a correlação par-a-par $\rho$.
+:::
+:::
+
+## Regras Práticas e a Escolha de $m$
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+A escolha do hiperparâmetro $m$ (número de atributos sorteados por divisão) dita o comportamento de todo o modelo. Breiman (2001) e Hastie et al. (ESL §15.3, p. 592) estabeleceram os valores padrão de referência:
+
+- **Classificação:** $m = \lfloor \sqrt{p} \rfloor$, com nós terminais de tamanho mínimo $n_{\min} = 1$.
+- **Regressão:** $m = \lfloor p/3 \rfloor$, com nós terminais de tamanho mínimo $n_{\min} = 5$.
+
+O que acontece nos extremos de $m$?
+1. **Se $m = p$:** Recuperamos exatamente o **Bagging convencional**. Todas as variáveis competem em cada divisão. O atributo preditor mais forte sempre vencerá a disputa nos nós superiores, gerando árvores fortemente correlacionadas ($\rho$ elevado).
+2. **Se $m = 1$:** Em cada nó, a árvore é forçada a dividir segundo uma única variável sorteada a esmo. A correlação $\rho$ atinge seu mínimo histórico; no entanto, como a árvore perde a capacidade de escolher variáveis informativas, o viés estrutural de cada árvore individual aumenta consideravelmente, e sua variância individual $\sigma^2$ também se eleva.
+
+A escolha ótima de $m$ opera um **tradeoff interno de viés e descorrelação**: queremos $m$ suficientemente pequeno para quebrar $\rho$, mas suficientemente grande para permitir que as árvores capturem as direções preditivas essenciais dos dados.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+- **Recomendações Canônicas (ESL §15.3):**
+  - **Classificação:** $m = \lfloor \sqrt{p} \rfloor$, $n_{\min} = 1$.
+  - **Regressão:** $m = \lfloor p/3 \rfloor$, $n_{\min} = 5$.
+
+::: {.fragment}
+- **Comportamento dos Extremos de $m$:**
+  - $m = p \implies$ **Bagging Puro:**
+    - Baixo viés individual, mas alta correlação entre árvores ($\rho \uparrow$).
+  - $m = 1 \implies$ **Descorrelação Máxima:**
+    - $\rho \downarrow$ drástico, mas o viés individual cresce ($\text{Bias}^2 \uparrow$) e a variância individual sobe ($\sigma^2 \uparrow$).
+:::
+
+::: {.fragment .callout-important}
+## O Ponto Ótimo
+O valor ideal de $m$ minimiza o compromisso $\rho \sigma^2 + \text{Bias}^2$.
+:::
+:::
+
+## Como $m$ Quebra a Correlação no California Housing
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Para quantificar experimentalmente a ação de $m$, avaliamos ensembles de 100 árvores variando $m \in \{1, 2, 3, 5, 8\}$ no conjunto *California Housing* ($p = 8$ variáveis). Calculamos a matriz de correlação empírica entre os vetores de predição de teste de todas as árvores e a variância média de predição individual.
+
+Os resultados numéricos obtidos confirmam a teoria com precisão milimétrica:
+- Para $m = 8$ (Bagging puro): a correlação média é $\rho = 0{,}7026$, com erro de teste $\text{MSE}_{\text{teste}} = 0{,}3036$.
+- Para $m = 3$ (regra $p/3 \approx 2{,}67$): a correlação cai para $\rho = 0{,}6582$, e o erro de teste atinge seu **mínimo global** em $\text{MSE}_{\text{teste}} = 0{,}2897$.
+- Para $m = 1$ (aleatoriedade extrema): a correlação desaba para $\rho = 0{,}4917$; contudo, o erro de teste sobe para $0{,}3589$ devido ao acréscimo de viés e dispersão das árvores individuais.
+
+O painel duplo a seguir ilustra a queda monotônica de $\rho$ e a clássica curva em U do erro quadrático médio em função de $m$:
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+| $m$ | Correlação $\rho$ | Variância Individual $\sigma^2$ | $\text{MSE}_{\text{teste}}$ | Erro OOB |
+|:---:|:---:|:---:|:---:|:---:|
+| $1$ | $0{,}4917$ | $0{,}6139$ | $0{,}3589$ | $0{,}3575$ |
+| $2$ | $0{,}6071$ | $0{,}4873$ | $0{,}3045$ | $0{,}3188$ |
+| **$3$** | **$0{,}6582$** | **$0{,}4271$** | **$0{,}2897$** | **$0{,}3065$** |
+| $5$ | $0{,}6843$ | $0{,}3983$ | $0{,}3070$ | $0{,}3224$ |
+| $8$ (Bagging) | $0{,}7026$ | $0{,}3803$ | $0{,}3036$ | $0{,}3355$ |
+:::
+
+::: {.fragment}
+- Reduzir $m$ quebra a correlação $\rho$ (de $0{,}7026$ para $0{,}4917$).
+- O ótimo preditivo ocorre em $m = 3$, superando o Bagging puro.
+:::
+:::
+
+::: {.fig-resize style="width: 85%; margin: 0 auto;"}
+```{python}
+#| echo: false
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.5, 3.6))
+
+# Painel 1: Queda de rho com m
+ax1.plot(m_values, rho_list, marker="o", color=COR_A, linewidth=2)
+ax1.set_title("Correlação Média entre Árvores ($\\rho$)")
+ax1.set_xlabel("Número de Atributos por Divisão (m)")
+ax1.set_ylabel("Correlação Par-a-Par ($\\rho$)")
+ax1.set_xticks(m_values)
+ax1.set_ylim(0.45, 0.75)
+
+# Painel 2: Tradeoff no MSE
+ax2.plot(m_values, mse_test_m, marker="s", color=COR_B, linewidth=2, label="MSE Teste")
+ax2.plot(m_values, oob_m, marker="^", color=COR_VERDE, linewidth=2, linestyle="--", label="MSE OOB")
+ax2.axvline(3, color=COR_CINZA, linestyle=":", alpha=0.8, label="m ótimo = 3")
+ax2.set_title("Tradeoff do Erro em Função de m")
+ax2.set_xlabel("Número de Atributos por Divisão (m)")
+ax2.set_ylabel("Erro Quadrático Médio")
+ax2.set_xticks(m_values)
+ax2.legend()
+
+plt.tight_layout()
+plt.show()
+```
+:::
+
+## Pausa 4: A Dinâmica de $m$ e a Supressão de Atributos
+
+::: {.callout-tip}
+## O Atributo Onipresente
+Uma base de dados médica com $p = 100$ atributos contínuos onde um único biomarcador $X_1$ possui correlação linear extrema com a doença ($r = 0{,}98$), enquanto outros $99$ possuem correlações sutis ($r \approx 0{,}15$). O que ocorrerá com a estrutura das árvores no Bagging ($m = 100$) comparado a uma Random Forest com $m = 10$?
+:::
+
+::: {.callout-tip}
+## V ou F: Dinâmica de Hiperparâmetros em RF
+Julgue V ou F — a questão só conta se acertar os 4 itens:
+
+- □ Reduzir o hiperparâmetro $m$ em Random Forests sempre reduz o viés das árvores individuais que compõem o modelo.
+- □ No Bagging ($m = p$), se existir um atributo fortemente dominante nos dados, quase todas as árvores do ensemble realizarão o primeiro corte no mesmo atributo.
+- □ A subamostragem aleatória de atributos ($m < p$) permite que preditores moderadamente informativos tenham a oportunidade de liderar os cortes primários da árvore.
+- □ Ajustar $m = 1$ garante a menor correlação teórica entre árvores, mas pode deteriorar o erro de generalização por excesso de viés.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Pausa Ativa 4: Resposta
+
+::: {.callout-tip}
+## V ou F: Resposta
+- ✗ **F:** Reduzir $m$ restringe a busca pelo corte ótimo, o que tende a **aumentar** ligeiramente o viés individual de cada árvore.
+- ✔ **V:** Com $m = p$, o atributo dominante vence a disputa em quase $100\%$ das raízes das árvores bootstrap.
+- ✔ **V:** Em $m < p$, há probabilidade $(1 - m/p)$ de o atributo dominante não estar entre os sorteados, permitindo que outros atributos conduzam o corte.
+- ✔ **V:** Com $m = 1$, as divisões são cegas à capacidade preditiva, elevando o viés e a variância individual além do ponto ótimo.
+:::
+
+::: {.fragment}
+**Voltando à pergunta:** No Bagging ($m = 100$), $X_1$ será selecionado na raiz de praticamente todas as árvores, tornando as árvores extremamente correlacionadas ($\rho \to 1$) e anulando o ganho da agregação. Na Random Forest ($m = 10$), em cerca de $90\%$ das divisões de raiz o biomarcador $X_1$ não estará disponível no sorteio aleatório, forçando as árvores a explorarem sinais complementares nos outros 99 atributos e derrubando a correlação $\rho$.
+:::
+:::
+
+# Bloco 3: Avaliação Out-of-Bag (OOB) e Importância de Atributos
+
+## Bootstrap: Dedução da Probabilidade $1 - 1/e$
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Uma das propriedades matemáticas mais elegantes do bootstrap em árvores de decisão é que a própria reamostragem com reposição gera, gratuitamente, um conjunto de validação independente para cada modelo base: as observações **Out-of-Bag (OOB)**.
+
+Deduzimos formalmente a proporção assintótica de observações que ficam fora de uma amostra bootstrap:
+
+::: {.callout-note icon=false}
+## Teorema (Probabilidade de Amostragem Out-of-Bag; ESL §15.3.1, p. 592)
+Seja $Z = \{\mathbf{z}_1, \dots, \mathbf{z}_N\}$ um conjunto de treinamento com $N$ observações. Seja $Z^*$ uma amostra bootstrap de tamanho $N$ extraída com reposição de $Z$. A probabilidade de uma observação específica $\mathbf{z}_i$ **não ser selecionada** em nenhuma das $N$ extrações de $Z^*$ é dada por:
+
+$$P(\mathbf{z}_i \notin Z^*) = \left(1 - \frac{1}{N}\right)^N$$
+
+No limite assintótico quando $N \to \infty$, essa probabilidade converge estritamente para o inverso da base dos logaritmos naturais:
+
+$$\lim_{N \to \infty} P(\mathbf{z}_i \notin Z^*) = e^{-1} \approx 0{,}367879 \dots \approx 36{,}8\%$$
+:::
+
+**Demonstração:**
+Em cada sorteio independente com reposição a partir de $Z$, cada uma das $N$ observações possui probabilidade uniforme $1/N$ de ser selecionada. Consequentemente, a probabilidade de uma observação específica $\mathbf{z}_i$ **não** ser escolhida em uma extração particular é:
+
+$$P(\text{não sortear } \mathbf{z}_i \text{ no sorteio } j) = 1 - \frac{1}{N}$$
+
+Como a amostra bootstrap consiste em $N$ sorteios mutuamente independentes e identicamente distribuídos:
+
+$$P(\mathbf{z}_i \notin Z^*) = \prod_{j=1}^N \left(1 - \frac{1}{N}\right) = \left(1 - \frac{1}{N}\right)^N$$
+
+Para obter o limite assintótico quando $N \to \infty$, aplicamos a transformação logarítmica:
+
+$$\ln L = \lim_{N \to \infty} \ln \left[\left(1 - \frac{1}{N}\right)^N\right] = \lim_{N \to \infty} N \ln \left(1 - \frac{1}{N}\right)$$
+
+Utilizando a expansão em série de Taylor de $\ln(1 - u) = -u - \frac{u^2}{2} - \frac{u^3}{3} - \dots$ para $|u| < 1$, fazendo $u = 1/N$:
+
+$$\ln\left(1 - \frac{1}{N}\right) = -\frac{1}{N} - \frac{1}{2N^2} - O\left(\frac{1}{N^3}\right)$$
+
+Multiplicando por $N$:
+
+$$N \ln\left(1 - \frac{1}{N}\right) = -1 - \frac{1}{2N} - O\left(\frac{1}{N^2}\right)$$
+
+Tomando o limite $N \to \infty$:
+
+$$\ln L = \lim_{N \to \infty} \left[-1 - \frac{1}{2N} - O\left(\frac{1}{N^2}\right)\right] = -1$$
+
+Exponenciando ambos os lados:
+
+$$L = \lim_{N \to \infty} \left(1 - \frac{1}{N}\right)^N = e^{-1} = \frac{1}{e} \approx 0{,}367879 \dots \quad \blacksquare$$
+
+Como consequência imediata, a probabilidade de uma observação pertencer à amostra bootstrap (aparecendo uma ou mais vezes) é:
+
+$$P(\mathbf{z}_i \in Z^*) = 1 - \left(1 - \frac{1}{N}\right)^N \xrightarrow{N \to \infty} 1 - \frac{1}{e} \approx 0{,}632120 \dots \approx 63{,}2\%$$
+
+Em nosso experimento com $N = 2.000$ no California Housing, calculamos diretamente:
+$$\left(1 - \frac{1}{2.000}\right)^{2.000} = 0{,}367786 \dots$$
+um valor que já coincide com $1/e \approx 0{,}367879$ até a terceira casa decimal ($36{,}8\%$).
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Teorema do Limite OOB
+$$\lim_{N \to \infty} P(\mathbf{z}_i \notin Z^*) = \lim_{N \to \infty} \left(1 - \frac{1}{N}\right)^N = \frac{1}{e} \approx 36{,}8\%$$
+:::
+
+::: {.fragment}
+**Passo 1 — Probabilidade de Não Sorteio Individual:**
+Em cada extração com reposição de $N$ dados:
+$$P(\text{não sortear } \mathbf{z}_i) = 1 - \frac{1}{N}$$
+:::
+
+::: {.fragment}
+**Passo 2 — Independência dos $N$ Sorteios:**
+$$P(\mathbf{z}_i \notin Z^*) = \left(1 - \frac{1}{N}\right)^N$$
+:::
+
+::: {.fragment}
+**Passo 3 — Limite Clássico do Cálculo:**
+Pela definição fundamental da constante de Euler $e = \lim_{n \to \infty} (1 + 1/n)^n$:
+$$\lim_{N \to \infty} \left(1 - \frac{1}{N}\right)^N = e^{-1} \approx 0{,}367879 \dots \approx 36{,}8\%$$
+:::
+
+::: {.fragment .callout-important}
+## Consequência
+Em média, **$36{,}8\%$ do conjunto de treino original** nunca foi visto por cada árvore do ensemble!
+:::
+:::
+
+## O Estimador Out-of-Bag (OOB)
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Como cada árvore $T_b$ desconhece cerca de $36{,}8\%$ das observações originais de $Z$, podemos construir uma avaliação de generalização rigorosa e imparcial sem necessidade de separar previamente um conjunto de validação e sem executar os dispendiosos laços de validação cruzada $k$-fold (estudados na Aula 4).
+
+::: {.callout-note icon=false}
+## Definição (Preditor e Erro Out-of-Bag; ESL §15.3.1, p. 593)
+Para cada observação $(\mathbf{x}_i, y_i) \in Z$, definimos o conjunto de índices das árvores nas quais $(\mathbf{x}_i, y_i)$ não participou do treino bootstrap:
+
+$$\mathcal{B}_i = \{b \in \{1, \dots, B\} : (\mathbf{x}_i, y_i) \notin Z^{*b}\}$$
+
+O **preditor Out-of-Bag** para o ponto $\mathbf{x}_i$ é a média das predições restrita exclusivamente a esse subconjunto de árvores:
+
+$$\hat{f}_{\text{oob}}(\mathbf{x}_i) = \frac{1}{|\mathcal{B}_i|} \sum_{b \in \mathcal{B}_i} T_b(\mathbf{x}_i)$$
+
+O **Erro OOB global** (para perda quadrática) é a média das discrepâncias em todo o conjunto de treino:
+
+$$\text{MSE}_{\text{oob}} = \frac{1}{N} \sum_{i=1}^N \left(y_i - \hat{f}_{\text{oob}}(\mathbf{x}_i)\right)^2$$
+:::
+
+Breiman (2001) e Hastie et al. (2009) demonstraram que a estimativa $\text{MSE}_{\text{oob}}$ é assintoticamente equivalente ao erro obtido por **validação cruzada Leave-One-Out ($N$-fold CV)**. 
+
+Em nossos experimentos no California Housing, veja a concordância notável entre o erro de teste independente ($N_{\text{teste}} = 1.000$) e o erro OOB obtido apenas a partir das $2.000$ instâncias de treino:
+- **Bagging ($m=8$):** $\text{MSE}_{\text{teste}} = 0{,}3036$ vs. $\text{MSE}_{\text{oob}} = 0{,}3355$.
+- **Random Forest ($m=3$):** $\text{MSE}_{\text{teste}} = 0{,}2897$ vs. $\text{MSE}_{\text{oob}} = 0{,}3065$.
+
+O erro OOB rastreia perfeitamente a generalização do modelo, servindo como critério de parada natural: quando o erro OOB estabiliza em função de $B$, o treinamento pode ser encerrado.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note icon=false}
+## Predição OOB para o Ponto $\mathbf{x}_i$
+$$\hat{f}_{\text{oob}}(\mathbf{x}_i) = \frac{1}{|\mathcal{B}_i|} \sum_{b \in \mathcal{B}_i} T_b(\mathbf{x}_i), \quad \text{onde } \mathcal{B}_i = \{b : \mathbf{z}_i \notin Z^{*b}\}$$
+:::
+
+::: {.fragment}
+- **Propriedades Teóricas:**
+  - Como cada árvore em $\mathcal{B}_i$ não viu $\mathbf{z}_i$, $\hat{f}_{\text{oob}}(\mathbf{x}_i)$ é um estimador de teste honesto.
+  - O erro OOB converge assintoticamente para o erro de validação cruzada *Leave-One-Out*.
+:::
+
+::: {.fragment}
+- **Vantagens Práticas:**
+  - **Zero Custo Adicional:** Calculado durante o próprio treinamento das árvores.
+  - Elimina a necessidade de particionamento $K$-fold de CV para seleção de hiperparâmetros.
+:::
+:::
+
+## Importância de Atributos: Redução de Impureza (MDI) vs. Permutação OOB (MDA)
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Árvores individuais perdem a interpretabilidade ao serem fundidas em um comitê de centenas de árvores. Para recuperar o entendimento da física dos dados, Breiman (2001) propôs duas métricas matemáticas para quantificar a relevância de cada atributo:
+
+**1. Mean Decrease Impurity (MDI / Gini Importance):**  
+Em cada nó $\tau$ particionado pela variável $j$, mede-se a redução na impureza ou na soma de quadrados dos resíduos proporcionada pelo corte:
+
+$$\Delta I(\tau, j) = I(\tau) - \frac{N_{\tau_E}}{N_\tau} I(\tau_E) - \frac{N_{\tau_D}}{N_\tau} I(\tau_D)$$
+
+A importância MDI da variável $j$ é a soma ponderada de todas as reduções de impureza em que a variável $j$ foi selecionada, acumulada ao longo de todas as árvores do ensemble:
+
+$$\text{MDI}(j) = \frac{1}{B} \sum_{b=1}^B \sum_{\tau \in T_b : v(\tau) = j} p(\tau) \Delta I(\tau, j)$$
+
+onde $p(\tau) = N_\tau / N$.
+
+**Patologia Conhecida do MDI:** Conforme alertado por Strobl et al. (2007) e ESL §15.3.2, o MDI possui um **viés sistemático em favor de atributos contínuos ou categóricos com grande número de categorias distintas** (alta cardinalidade), pois esses atributos oferecem mais pontos de corte artificiais para otimizar espuriamente o critério de treino.
+
+**2. Mean Decrease Accuracy (MDA / Permutation Importance):**  
+Para contornar o viés do MDI, o MDA utiliza a integridade das amostras Out-of-Bag. Para cada árvore $b$:
+1. Calcula-se o erro de predição nas amostras OOB originais: $E_b^{\text{oob}}$.
+2. Embaralha-se aleatoriamente os valores da coluna da variável $j$ **apenas dentro das amostras OOB**, rompendo a sua relação estatística com a resposta $y$, enquanto mantêm-se intactas as outras variáveis: $\tilde{Z}^{\text{oob}, j}$.
+3. Recalcula-se o erro com os dados corrompidos: $\tilde{E}_{b, j}^{\text{oob}}$.
+
+A importância por permutação (MDA) é o aumento médio no erro ao longo de todas as árvores:
+
+$$\text{MDA}(j) = \frac{1}{B} \sum_{b=1}^B \left(\tilde{E}_{b, j}^{\text{oob}} - E_b^{\text{oob}}\right)$$
+
+Se a variável $j$ for crucial para o modelo, embaralhar seus valores degradará drasticamente as predições, resultando em um MDA elevado. Se a variável for irrelevante (ruído puro), o embaralhamento não alterará o erro, resultando em $\text{MDA} \approx 0$.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.fragment}
+- **1. Mean Decrease Impurity (MDI):**
+  - Soma da redução de impureza (Gini/MSE) em todos os nós onde a variável $j$ realizou a divisão.
+  - **Limitação Crítica:** Fortemente enviesado em favor de variáveis contínuas ou de alta cardinalidade (muitas categorias).
+:::
+
+::: {.fragment}
+- **2. Mean Decrease Accuracy (MDA / Permutation Importance):**
+  - Embaralha aleatoriamente os valores da variável $j$ nas amostras **Out-of-Bag**.
+  - Mede o salto no erro de validação:
+    $$\text{MDA}(j) = \frac{1}{B} \sum_{b=1}^B \left(\text{Erro}(\tilde{Z}_j^{\text{oob}}) - \text{Erro}(Z^{\text{oob}})\right)$$
+  - Imparcial, realista e independente de cardinalidade.
+:::
+:::
+
+::: {.fig-resize style="width: 85%; margin: 0 auto;"}
+```{python}
+#| echo: false
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.5, 3.6))
+
+# Ordenação por MDA
+order = np.argsort(mda_importances)
+y_pos = np.arange(len(features))
+
+ax1.barh(y_pos, mdi_importances[order], color=COR_A, align="center")
+ax1.set_yticks(y_pos)
+ax1.set_yticklabels([features[i] for i in order])
+ax1.set_title("MDI (Redução de Impureza)")
+ax1.set_xlabel("Importância Normalizada")
+
+ax2.barh(y_pos, mda_importances[order], color=COR_VERDE, align="center")
+ax2.set_yticks(y_pos)
+ax2.set_yticklabels([features[i] for i in order])
+ax2.set_title("MDA (Permutação OOB)")
+ax2.set_xlabel("Aumento Médio no MSE")
+
+plt.tight_layout()
+plt.show()
+```
+:::
+
+## Pausa 5: Validação OOB e Armadilhas de MDI vs. MDA
+
+::: {.callout-tip}
+## O Atributo com Ruído de Alta Cardinalidade
+Você adiciona a uma base de dados um atributo espúrio `ID_Cliente` com $2.000$ inteiros aleatórios únicos sorteados uniformemente ($1$ a $2.000$), que não guarda qualquer relação causal com a variável resposta. Ao ajustar uma Random Forest, o gráfico de MDI posiciona o `ID_Cliente` entre os três atributos mais importantes da floresta, enquanto o MDA o posiciona rigorosamente com importância zero. Por que ocorre essa divergência e em qual das duas métricas o engenheiro deve confiar?
+:::
+
+::: {.callout-tip}
+## V ou F: Diagnóstico de Importância e OOB
+Julgue V ou F — a questão só conta se acertar os 4 itens:
+
+- □ Em uma amostra bootstrap de tamanho $N$ extraída com reposição, a fração esperada de dados originais que compõem a partição Out-of-Bag é de aproximadamente $36{,}8\%$.
+- □ O erro calculado através das predições Out-of-Bag sofre de otimismo amostral (*training optimism*), subestimando o verdadeiro erro de generalização.
+- □ A métrica de importância MDI (Mean Decrease Impurity) pode inflacionar artificialmente a importância de variáveis numéricas ruidosas com muitos valores distintos.
+- □ A permutação de atributos no cálculo do MDA destrói a dependência estatística entre a variável permutada e o alvo $Y$, revelando seu impacto causal na acurácia do modelo.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Pausa Ativa 5: Resposta
+
+::: {.callout-tip}
+## V ou F: Resposta
+- ✔ **V:** Pela dedução assintótica $\lim (1 - 1/N)^N = 1/e \approx 36{,}8\%$.
+- ✗ **F:** O erro OOB avalia pontos que a árvore nunca viu, sendo uma estimativa não enviesada comparável ao Leave-One-Out CV.
+- ✔ **V:** O MDI favorece variáveis com muitos pontos de corte, permitindo sobreajuste espúrio nos nós inferiores.
+- ✔ **V:** O embaralhamento quebra a correlação $P(X_j, Y)$ preservando a distribuição marginal de $X_j$.
+:::
+
+::: {.fragment}
+**Voltando à pergunta:** O engenheiro deve confiar estritamente no **MDA**. O MDI mede a queda de impureza dentro dos dados de treino: com $2.000$ valores únicos, o algoritmo sempre consegue encontrar um ponto de corte que purifique artificialmente um nó inferior da árvore, acumulando redução espúria de impureza. No MDA, como a avaliação ocorre nas amostras Out-of-Bag (não vistas), embaralhar um ID aleatório não altera a qualidade da predição, revelando seu valor nulo.
+:::
+:::
+
+# Fechamento
+
+## Retomando as 5 Perguntas da Aula
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Ao término de nossa exploração analítica e empírica da teoria de ensembles, respondemos com rigor formal às cinco perguntas fundamentais do nosso roteiro:
+
+1. **Por que a média de estimadores preserva rigorosamente o viés original enquanto opera na variância?**
+   Porque a esperança matemática é um operador linear: $\mathbb{E}[\frac{1}{B}\sum_{b=1}^B T_b] = \frac{1}{B}\sum_{b=1}^B \mathbb{E}[T_b] = \mathbb{E}[T]$. O agregamento de modelos não adiciona flexibilidade funcional à classe de hipóteses base; ele atua estritamente cancelando as flutuações amostrais estocásticas idiossincráticas entre réplicas.
+2. **Como demonstrar analiticamente a fórmula da variância para variáveis aleatórias correlacionadas?**
+   Expandindo a variância da média na soma das $B$ variâncias individuais mais as $B(B-1)$ covariâncias cruzadas par-a-par: $\frac{1}{B^2}[B\sigma^2 + B(B-1)\rho\sigma^2] = \rho \sigma^2 + \frac{1-\rho}{B}\sigma^2$.
+3. **Qual é o gargalo assintótico do Bagging puro e como Random Forests quebram o teto $\rho \sigma^2$?**
+   Quando $B \to \infty$, a variância do Bagging converge inevitavelmente para $\rho \sigma^2$. No Bagging convencional, as árvores compartilham os mesmos atributos dominantes nos cortes de raiz, mantendo $\rho$ elevado. Florestas Aleatórias forçam a seleção de $m \le p$ variáveis em cada divisão de nó, descorrelacionando as árvores e rebaixando o patamar assintótico $\rho$.
+4. **Por que aproximadamente $36{,}8\%$ dos dados não entram em cada réplica bootstrap e como utilizá-los para validação OOB?**
+   A probabilidade de um ponto não ser sorteado em $N$ extrações independentes com reposição é $(1 - 1/N)^N \to 1/e \approx 0{,}368$. Avaliando cada ponto de treino apenas nas árvores em cujo conjunto bootstrap ele não participou, obtemos um estimador de generalização não enviesado equivalente ao Leave-One-Out CV a custo computacional zero.
+5. **Quais são os mecanismos matemáticos e as armadilhas de MDI vs. MDA?**
+   O MDI acumula a redução de impureza das divisões, sofrendo de viés sistemático em prol de variáveis com alta cardinalidade. O MDA embaralha os valores da variável exclusivamente nas amostras OOB e mede o salto no erro de generalização, oferecendo uma métrica realista e imparcial de relevância preditiva.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+1. **Preservação de Viés:** $\mathbb{E}[\bar{T}] = \mathbb{E}[T]$ por linearidade; o ensemble não corrige incapacidade estrutural do modelo base.
+2. **Variância Correlacionada:** $\text{Var}(\bar{T}) = \rho \sigma^2 + \frac{1-\rho}{B}\sigma^2$.
+3. **Quebra de $\rho$ em Random Forests:** Subamostrar $m \le p$ variáveis por nó impede o domínio hegemônico das variáveis fortes, derrubando $\rho$.
+4. **Validação OOB:** $\lim_{N\to\infty}(1 - 1/N)^N = 1/e \approx 36{,}8\%$. Predição honesta sem conjunto de validação externo.
+5. **MDI vs. MDA:** MDI tem viés de alta cardinalidade; MDA por permutação OOB é robusto e imparcial.
+:::
+
+## O Que Fica em Aberto: O Gargalo dos Modelos de Alto Viés
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Nesta aula, vimos que o Bagging e as Florestas Aleatórias constituem uma solução quase perfeita para estimadores que sofrem de **alta variância e baixo viés** (árvores profundas). A geração independente e paralela de réplicas combinada à subamostragem de atributos abate a variância sem aumentar o erro de aproximação.
+
+Entretanto, esse mecanismo falha completamente se o modelo base for rígido demais:
+- Se utilizarmos árvores extremamente rasas (*decision stumps*, com apenas um corte), seu viés estrutural será massivo.
+- Como o Bagging preserva a média, aplicar média sobre $10.000$ *stumps* continuará produzindo um estimador de alto viés.
+- Além disso, o treinamento das árvores em Random Forests é **independente e paralelo**: nenhuma árvore aprende com os erros cometidos pelas árvores anteriores.
+
+Surge então a pergunta fundamental da próxima aula: **é possível construir um ensemble inteligente onde os modelos sejam gerados sequencialmente, de modo que cada novo modelo seja treinado especificamente para corrigir os erros e resíduos deixados pelos modelos anteriores?**
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note}
+## Onde o Bagging Falha
+- Modelos de alto viés (*stumps* rasos, modelos lineares rígidos).
+- As árvores são geradas de forma **independente e paralela**.
+- Nenhuma árvore aprende com as falhas ou resíduos das outras.
+:::
+
+::: {.fragment}
+- **O Desafio:**
+  - E se quisermos reduzir o **viés** de modelos muito simples?
+  - E se pudermos focar o poder de aprendizado sequencialmente onde o ensemble mais erra?
+:::
+:::
+
+## Ponte para a Aula 10: Gradient Boosting e Otimização no Espaço de Funções
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+Na Aula 10, estudaremos a segunda grande família de métodos de ensemble: o **Boosting**.
+
+Contrastaremos a filosofia de Bagging com a de Boosting:
+- Enquanto o Bagging parte de modelos complexos (árvores profundas com baixo viés) e utiliza média paralela para **reduzir variância**,
+- O Boosting parte de modelos extremamente simples (*weak learners* ou *stumps* com alto viés) e os combina sequencialmente para **reduzir o viés**.
+
+Formalizaremos o **Gradient Boosting** sob uma perspectiva unificadora elegante: a descida de gradiente realizada não no espaço tradicional de parâmetros $\boldsymbol\beta \in \mathbb{R}^p$, mas diretamente no **espaço de funções de dimensão infinita**. Veremos que os resíduos de regressão e os pseudo-resíduos de perdas arbitrárias são rigorosamente as direções do gradiente negativo da função de custo, abrindo caminho para algoritmos estado-da-arte como XGBoost e LightGBM.
+:::
+
+::: {.content-visible when-format="revealjs"}
+
+::: {.callout-note}
+## Duas Filosofias Complementares de Ensemble
+- **Aula 9 (Bagging e Random Forests):**
+  - Alvo: **Redução de Variância**.
+  - Ponto de partida: Árvores profundas (baixo viés, alta variância).
+  - Paradigma: Paralelo, média de variáveis descorrelacionadas.
+- **Aula 10 (Gradient Boosting):**
+  - Alvo: **Redução de Viés**.
+  - Ponto de partida: Árvores rasas / *stumps* (alto viés, baixa variância).
+  - Paradigma: Sequencial, descida de gradiente no **espaço de funções**.
+:::
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+
+---
+
+# Apêndice: Dedução Rigorosa e Premissas da Variância de Múltiplos Estimadores
+
+Neste apêndice, apresentamos a dedução matemática completa e formal da variância de múltiplos estimadores correlacionados sob agregação por média aritmética, partindo da definição axiomática de variância e propriedades de esperança. Em seguida, desenvolvemos a formulação matricial equivalente e analisamos sistematicamente as premissas subjacentes que tornam essa fórmula válida em teoria e as condições em que ela se aplica ou falha na prática.
+
+## 1. Dedução Passo a Passo a Partir dos Primeiros Princípios
+
+Sejam $T_1, \dots, T_B$ variáveis aleatórias reais definidas em um mesmo espaço de probabilidade $(\Omega, \mathcal{F}, \mathbb{P})$, representando as predições individuais de $B$ estimadores $\hat{f}_1(\mathbf{x}), \dots, \hat{f}_B(\mathbf{x})$ para um ponto de consulta fixo $\mathbf{x} \in \mathcal{X}$.
+
+O estimador agregado por média aritmética uniforme é dado por:
+$$\bar{T} = \frac{1}{B} \sum_{b=1}^B T_b$$
+
+### Passo 1 — Definição Fundamental da Variância
+Por definição elementar, a variância de uma variável aleatória $Z$ é a esperança quadrática do seu desvio em relação à sua esperança:
+$$\mathrm{Var}(Z) = \mathbb{E}\left[ \left( Z - \mathbb{E}[Z] \right)^2 \right]$$
+
+Substituindo $Z$ pela média aritmética $\bar{T}$:
+$$\mathrm{Var}(\bar{T}) = \mathbb{E}\left[ \left( \bar{T} - \mathbb{E}[\bar{T}] \right)^2 \right]$$
+
+### Passo 2 — Linearidade da Esperança
+Pela linearidade do operador de esperança matemática:
+$$\mathbb{E}[\bar{T}] = \mathbb{E}\left[ \frac{1}{B} \sum_{b=1}^B T_b \right] = \frac{1}{B} \sum_{b=1}^B \mathbb{E}[T_b]$$
+
+Portanto, a diferença entre a variável $\bar{T}$ e seu valor esperado é:
+$$\bar{T} - \mathbb{E}[\bar{T}] = \frac{1}{B} \sum_{b=1}^B T_b - \frac{1}{B} \sum_{b=1}^B \mathbb{E}[T_b] = \frac{1}{B} \sum_{b=1}^B \left( T_b - \mathbb{E}[T_b] \right)$$
+
+### Passo 3 — Expansão Quadrática do Somatório
+Elevando ambos os lados ao quadrado:
+$$\left( \bar{T} - \mathbb{E}[\bar{T}] \right)^2 = \left( \frac{1}{B} \sum_{i=1}^B (T_i - \mathbb{E}[T_i]) \right) \cdot \left( \frac{1}{B} \sum_{j=1}^B (T_j - \mathbb{E}[T_j]) \right)$$
+
+Pela propriedade distributiva do produto de somatórios, obtemos uma soma dupla sobre todos os $B \times B = B^2$ pares de índices $(i, j)$:
+$$\left( \bar{T} - \mathbb{E}[\bar{T}] \right)^2 = \frac{1}{B^2} \sum_{i=1}^B \sum_{j=1}^B (T_i - \mathbb{E}[T_i]) (T_j - \mathbb{E}[T_j])$$
+
+### Passo 4 — Aplicação da Esperança e Definição de Covariância
+Aplicando a esperança a ambos os lados da equação e utilizando novamente a linearidade da esperança (a esperança da soma é a soma das esperanças):
+$$\mathrm{Var}(\bar{T}) = \mathbb{E}\left[ \frac{1}{B^2} \sum_{i=1}^B \sum_{j=1}^B (T_i - \mathbb{E}[T_i]) (T_j - \mathbb{E}[T_j]) \right] = \frac{1}{B^2} \sum_{i=1}^B \sum_{j=1}^B \mathbb{E}\left[ (T_i - \mathbb{E}[T_i]) (T_j - \mathbb{E}[T_j]) \right]$$
+
+Por definição, o valor esperado do produto dos desvios de duas variáveis aleatórias em relação às suas respectivas médias é a **covariância** entre elas:
+$$\mathrm{Cov}(T_i, T_j) \equiv \mathbb{E}\left[ (T_i - \mathbb{E}[T_i]) (T_j - \mathbb{E}[T_j]) \right]$$
+
+Logo:
+$$\mathrm{Var}(\bar{T}) = \frac{1}{B^2} \sum_{i=1}^B \sum_{j=1}^B \mathrm{Cov}(T_i, T_j)$$
+
+### Passo 5 — Partição Exata dos Termos Diagonais e Cruzados
+A soma dupla de tamanho $B \times B$ pode ser rigorosamente particionada em dois subconjuntos disjuntos:
+1. Os elementos onde os índices coincidem ($i = j$), situados na **diagonal principal**;
+2. Os elementos onde os índices diferem ($i \neq j$), situados **fora da diagonal**.
+
+$$\sum_{i=1}^B \sum_{j=1}^B \mathrm{Cov}(T_i, T_j) = \sum_{i=1}^B \mathrm{Cov}(T_i, T_i) + \sum_{i=1}^B \sum_{j \neq i}^B \mathrm{Cov}(T_i, T_j)$$
+
+Como a covariância de uma variável com ela mesma é a sua própria variância ($\mathrm{Cov}(T_i, T_i) = \mathrm{Var}(T_i)$):
+$$\mathrm{Var}(\bar{T}) = \frac{1}{B^2} \left[ \sum_{i=1}^B \mathrm{Var}(T_i) + \sum_{i=1}^B \sum_{j \neq i}^B \mathrm{Cov}(T_i, T_j) \right]$$
+
+Esta igualdade é uma identidade estatística exata e não requer qualquer premissa sobre a distribuição das variáveis ou a independência entre elas.
+
+## 2. A Derivação do Caso Homogêneo e a Correlação Média Par-a-Par
+
+A partir da identidade exata obtida acima, investigamos o comportamento do estimador sob as premissas de homogeneidade próprias de algoritmos de ensemble bootstrap.
+
+### Contagem Rigorosa dos Termos
+- **Termos Diagonais ($i = j$):** existem exatamente $B$ termos correspondentes às variâncias individuais $\mathrm{Var}(T_1), \dots, \mathrm{Var}(T_B)$.
+- **Termos Cruzados Fora da Diagonal ($i \neq j$):** o número total de células na matriz $B \times B$ é $B^2$. Subtraindo os $B$ elementos da diagonal, restam exatamente:
+  $$B^2 - B = B(B - 1)$$
+  termos de covariância cruzada par-a-par.
+
+### Aplicação da Homogeneidade Marginal
+Suponha que todos os estimadores possuam a mesma variância marginal:
+$$\mathrm{Var}(T_i) = \sigma^2 \quad (\forall i = 1, \dots, B)$$
+
+Neste caso, a soma dos termos diagonais simplifica-se para:
+$$\sum_{i=1}^B \mathrm{Var}(T_i) = \sum_{i=1}^B \sigma^2 = B \sigma^2$$
+
+### Correlação Linear e a Média Par-a-Par
+Pela definição do coeficiente de correlação linear de Pearson:
+$$\rho_{ij} = \mathrm{Corr}(T_i, T_j) = \frac{\mathrm{Cov}(T_i, T_j)}{\sqrt{\mathrm{Var}(T_i)\mathrm{Var}(T_j)}} = \frac{\mathrm{Cov}(T_i, T_j)}{\sigma^2}$$
+
+Multiplicando por $\sigma^2$:
+$$\mathrm{Cov}(T_i, T_j) = \rho_{ij} \sigma^2 \quad (\forall i \neq j)$$
+
+Definimos a **correlação média par-a-par** $\bar{\rho}$ entre todos os $B(B - 1)$ pares de modelos distintos como:
+$$\bar{\rho} \equiv \frac{1}{B(B - 1)} \sum_{i=1}^B \sum_{j \neq i}^B \rho_{ij}$$
+
+Dessa definição segue que:
+$$\sum_{i=1}^B \sum_{j \neq i}^B \mathrm{Cov}(T_i, T_j) = \sigma^2 \sum_{i=1}^B \sum_{j \neq i}^B \rho_{ij} = B(B - 1) \bar{\rho} \sigma^2$$
+
+### Conclusão Algébrica da Equação Fundamental
+Substituindo esses dois resultados na expressão de $\mathrm{Var}(\bar{T})$:
+$$\mathrm{Var}(\bar{T}) = \frac{1}{B^2} \left[ B \sigma^2 + B(B - 1)\bar{\rho} \sigma^2 \right]$$
+
+Distribuindo a divisão por $B^2$:
+$$\mathrm{Var}(\bar{T}) = \frac{B \sigma^2}{B^2} + \frac{B(B - 1)\bar{\rho} \sigma^2}{B^2} = \frac{\sigma^2}{B} + \frac{B - 1}{B} \bar{\rho} \sigma^2$$
+
+Reescrevendo a fração racional $\frac{B - 1}{B}$ como $\left( 1 - \frac{1}{B} \right)$:
+$$\mathrm{Var}(\bar{T}) = \frac{\sigma^2}{B} + \left( 1 - \frac{1}{B} \right) \bar{\rho} \sigma^2 = \frac{\sigma^2}{B} + \bar{\rho} \sigma^2 - \frac{\bar{\rho}\sigma^2}{B}$$
+
+Agrupando os termos que compartilham o fator $\frac{\sigma^2}{B}$:
+$$\mathrm{Var}(\bar{T}) = \bar{\rho} \sigma^2 + \frac{(1 - \bar{\rho})\sigma^2}{B} = \bar{\rho} \sigma^2 + \frac{1 - \bar{\rho}}{B}\sigma^2 \quad \blacksquare$$
+
+Esta é precisamente a equação célebre de Hastie, Tibshirani & Friedman (*The Elements of Statistical Learning*, Eq. 15.1, p. 588).
+
+## 3. Derivação Matricial Equivalente e Espectro da Covariância
+
+A mesma demonstração pode ser conduzida com elegância compacta através de álgebra linear multivariada, revelando a geometria subjacente ao comitê de estimadores.
+
+Seja $\mathbf{T} = [T_1, \dots, T_B]^T \in \mathbb{R}^B$ o vetor aleatório de predições, com vetor de esperanças $\boldsymbol\mu = \mathbb{E}[\mathbf{T}] \in \mathbb{R}^B$ e matriz de covariância $\boldsymbol\Sigma \in \mathbb{R}^{B \times B}$:
+$$\boldsymbol\Sigma \equiv \mathbb{E}\left[ (\mathbf{T} - \boldsymbol\mu)(\mathbf{T} - \boldsymbol\mu)^T \right]$$
+
+O estimador da média aritmética é uma combinação linear representada pelo produto interno com o vetor de pesos $\mathbf{w} = \frac{1}{B} \mathbf{1}_B$, onde $\mathbf{1}_B = [1, 1, \dots, 1]^T \in \mathbb{R}^B$:
+$$\bar{T} = \mathbf{w}^T \mathbf{T} = \frac{1}{B} \mathbf{1}_B^T \mathbf{T}$$
+
+A variância de qualquer forma linear $\mathbf{w}^T \mathbf{T}$ é a forma quadrática correspondente:
+$$\mathrm{Var}(\bar{T}) = \mathbf{w}^T \boldsymbol\Sigma \mathbf{w} = \left(\frac{1}{B} \mathbf{1}_B\right)^T \boldsymbol\Sigma \left(\frac{1}{B} \mathbf{1}_B\right) = \frac{1}{B^2} \mathbf{1}_B^T \boldsymbol\Sigma \mathbf{1}_B$$
+
+Quando todos os estimadores possuem variância $\sigma^2$ e correlação par-a-par constante $\rho$, a matriz de covariância assume a estrutura clássica de **simetria composta** (*compound symmetry*):
+$$\boldsymbol\Sigma = \sigma^2 \begin{bmatrix}
+1 & \rho & \cdots & \rho \\
+\rho & 1 & \cdots & \rho \\
+\vdots & \vdots & \ddots & \vdots \\
+\rho & \rho & \cdots & 1
+\end{bmatrix} = \sigma^2 \left[ (1 - \rho)\mathbf{I}_B + \rho \mathbf{1}_B \mathbf{1}_B^T \right]$$
+
+onde $\mathbf{I}_B$ é a matriz identidade de dimensão $B$. Multiplicando à direita pelo vetor de uns $\mathbf{1}_B$:
+$$\boldsymbol\Sigma \mathbf{1}_B = \sigma^2 \left[ (1 - \rho)\mathbf{I}_B \mathbf{1}_B + \rho \mathbf{1}_B (\mathbf{1}_B^T \mathbf{1}_B) \right]$$
+
+Como $\mathbf{I}_B \mathbf{1}_B = \mathbf{1}_B$ e $\mathbf{1}_B^T \mathbf{1}_B = \sum_{b=1}^B 1 = B$:
+$$\boldsymbol\Sigma \mathbf{1}_B = \sigma^2 \left[ (1 - \rho)\mathbf{1}_B + \rho B \mathbf{1}_B \right] = \sigma^2 [1 - \rho + B\rho] \mathbf{1}_B$$
+
+Este cálculo demonstra que $\mathbf{1}_B$ é um **autovetor** da matriz de covariância $\boldsymbol\Sigma$, associado ao autovalor:
+$$\lambda_1 = \sigma^2 [1 + (B - 1)\rho]$$
+
+Multiplicando agora à esquerda por $\mathbf{1}_B^T$:
+$$\mathbf{1}_B^T \boldsymbol\Sigma \mathbf{1}_B = \mathbf{1}_B^T \left( \sigma^2 [1 + (B - 1)\rho] \mathbf{1}_B \right) = \sigma^2 [1 + (B - 1)\rho] (\mathbf{1}_B^T \mathbf{1}_B) = B \sigma^2 [1 + (B - 1)\rho]$$
+
+Substituindo na expressão da variância:
+$$\mathrm{Var}(\bar{T}) = \frac{1}{B^2} \mathbf{1}_B^T \boldsymbol\Sigma \mathbf{1}_B = \frac{B \sigma^2 [1 + (B - 1)\rho]}{B^2} = \frac{\sigma^2 [1 + (B - 1)\rho]}{B} = \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2$$
+
+### Restrições Físicas e Semidefinição Positiva ($\boldsymbol\Sigma \succeq 0$)
+Como $\boldsymbol\Sigma$ é uma matriz de covariância, ela é obrigatoriamente simétrica semidefinida positiva. Seus $B$ autovalores são:
+- $\lambda_1 = \sigma^2[1 + (B - 1)\rho]$ (multiplicidade 1, com autovetor $\mathbf{1}_B$);
+- $\lambda_2 = \dots = \lambda_B = \sigma^2(1 - \rho)$ (multiplicidade $B - 1$, com autovetores no subespaço ortogonal a $\mathbf{1}_B$, isto é, vetores cujas coordenadas somam zero).
+
+Para que todos os autovalores sejam não-negativos ($\lambda_k \ge 0$), a correlação $\rho$ precisa satisfazer:
+1. $1 - \rho \ge 0 \implies \rho \le 1$;
+2. $1 + (B - 1)\rho \ge 0 \implies \rho \ge -\frac{1}{B - 1}$.
+
+No limite em que o número de modelos cresce indefinidamente ($B \to \infty$):
+$$\lim_{B \to \infty} \left(-\frac{1}{B - 1}\right) = 0$$
+
+Isso estabelece um teorema geométrico profundo: **é matematicamente impossível ter correlação negativa constante entre pares de um comitê arbitrariamente grande**. Em espaços euclidianos de alta dimensão, vetores não podem todos formar ângulos obtusos mútuos superiores a $90^\circ$. Por conseguinte, para ensembles práticos, necessariamente temos $\rho \ge 0$.
+
+## 4. Dissecação Crítica das Premissas: O Que é Assumido Sobre a Média?
+
+A dedução matemática revela de forma transparente o conjunto de hipóteses que sustentam o funcionamento da média em ensembles. Identificamos cinco premissas cruciais:
+
+### Premissa 1: Linearidade do Operador de Agregação
+A dedução inteira depende da propriedade distributiva da média: $\mathbb{E}[\bar{T}] = \frac{1}{B}\sum \mathbb{E}[T_b]$ e $(\bar{T} - \mathbb{E}[\bar{T}]) = \frac{1}{B}\sum (T_b - \mathbb{E}[T_b])$.
+- **Onde se aplica perfeitamente:** em **problemas de regressão**, onde a saída final é diretamente a média contínua das predições, e na **probabilidade prevista em classificação**, onde o comitê calcula $\hat{p}_k(\mathbf{x}) = \frac{1}{B}\sum_{b=1}^B \hat{p}_{k,b}(\mathbf{x})$.
+- **Onde NÃO se aplica diretamente:** em **classificação com voto majoritário rígido** (*hard voting* com perda 0-1), a predição é obtida aplicando o operador não-linear $\operatorname{argmax}_k \sum_{b=1}^B \mathbb{I}(\hat{y}_b(\mathbf{x}) = k)$. Funções indicadoras e operadores de máximo são severamente não-lineares. A redução de erro em classificação por voto majoritário não segue a fórmula $\rho\sigma^2 + \frac{1-\rho}{B}\sigma^2$, mas sim o Teorema do Júri de Condorcet e as propriedades da distribuição binomial acumulada (Breiman, 1996; Schapire et al., 1998). Em casos de fronteiras de decisão altamente instáveis, o voto majoritário pode até degradar o desempenho se os modelos base tiverem taxa de acerto inferior a $50\%$.
+
+### Premissa 2: Modelos Identicamente Distribuídos (Permutabilidade dos Estimadores)
+A transição de $\sum \mathrm{Var}(T_i)$ para $B\sigma^2$ assume que todas as árvores possuem a mesma variância marginal.
+- Em Bagging e Random Forests, essa premissa é plenamente garantida pela **permutabilidade** (*exchangeability*) do procedimento estocástico: cada réplica bootstrap $\mathcal{D}^{*b}$ é gerada através do mesmo processo de amostragem multinomial independente com reposição condicionado a $\mathcal{D}$, e o mesmo algoritmo $\mathcal{A}$ é aplicado para treinar cada árvore.
+- Consequentemente, para qualquer $b$, a distribuição de probabilidade marginal de $T_b = \hat{f}_b(\mathbf{x})$ é exatamente a mesma.
+
+### Premissa 3: Preservação Estrita do Viés (Incapacidade de Corrigir Subajuste)
+Por linearidade da esperança matemática, temos:
+$$\mathbb{E}[\bar{T}] = \frac{1}{B} \sum_{b=1}^B \mathbb{E}[T_b] = \frac{1}{B} \sum_{b=1}^B \mu = \mu$$
+Se a verdadeira função subjacente for $f(\mathbf{x})$, o viés do estimador individual é $\mathrm{Viés}(T_b) = \mathbb{E}[T_b] - f(\mathbf{x}) = \mu - f(\mathbf{x})$. O viés da média aritmética é:
+$$\mathrm{Viés}(\bar{T}) = \mathbb{E}[\bar{T}] - f(\mathbf{x}) = \mu - f(\mathbf{x}) = \mathrm{Viés}(T_b)$$
+
+> [!IMPORTANT]
+> **A média aritmética preserva o viés rigorosamente intacto.** A média de modelos não tem capacidade algorítmica de reduzir o viés de modelos fracos. Se os modelos base forem incapazes de capturar a curvatura dos dados (como *decision stumps* de profundidade 1), o comitê resultante continuará sofrendo exatamente do mesmo erro sistemático. Esta é a razão fundamental pela qual o Bagging exige árvores profundas e sem poda (modelos de baixo viés).
+
+### Premissa 4: Correlação Média Positiva Não Nula ($\bar{\rho} > 0$)
+A dedução mostra que quando $\rho = 0$, a variância assintótica converge a zero ($\sigma^2 / B \to 0$). Contudo, porque os dados de treino de todos os estimadores provêm de reamostragens de uma mesma amostra finita $\mathcal{D}$, as árvores inevitavelmente correlacionam suas predições ($\rho > 0$).
+A fórmula demonstra que $\rho \sigma^2$ atua como um **piso irredutível de variância**: por maior que seja $B$, adicionar mais árvores nunca reduzirá a variância abaixo de $\rho \sigma^2$. Daí a genialidade de Breiman (2001) com as Random Forests: ao introduzir a seleção aleatória de subespaços de atributos em cada nó ($m \ll p$), o algoritmo força as árvores a tomarem caminhos ortogonais, reduzindo ativamente $\rho$ e baixando o próprio piso.
+
+## 5. Otimalidade dos Pesos: Por Que a Média Simples $1/B$?
+
+Poder-se-ia questionar se uma combinação convexa arbitrária $\bar{T}_{\mathbf{w}} = \sum_{b=1}^B w_b T_b$ com pesos não homogêneos $\mathbf{w} = [w_1, \dots, w_B]^T$ poderia produzir uma variância ainda menor do que a média simples $w_b = 1/B$.
+
+Consideremos o problema de otimização de encontrar os pesos ótimos $\mathbf{w}$ que minimizam a variância total, sujeitos à restrição de não alteração da escala ($\sum_{b=1}^B w_b = \mathbf{w}^T \mathbf{1}_B = 1$):
+$$\min_{\mathbf{w} \in \mathbb{R}^B} \quad \mathbf{w}^T \boldsymbol\Sigma \mathbf{w} \quad \text{sujeito a} \quad \mathbf{w}^T \mathbf{1}_B = 1$$
+
+Formulamos o Lagrangiano com multiplicador escalar $\lambda \in \mathbb{R}$:
+$$\mathcal{L}(\mathbf{w}, \lambda) = \mathbf{w}^T \boldsymbol\Sigma \mathbf{w} - \lambda (\mathbf{w}^T \mathbf{1}_B - 1)$$
+
+Calculando o gradiente em relação a $\mathbf{w}$ e igualando a zero:
+$$\nabla_{\mathbf{w}} \mathcal{L} = 2 \boldsymbol\Sigma \mathbf{w} - \lambda \mathbf{1}_B = \mathbf{0} \implies \mathbf{w}^* = \frac{\lambda}{2} \boldsymbol\Sigma^{-1} \mathbf{1}_B$$
+
+Multiplicando à esquerda por $\mathbf{1}_B^T$ para impor a restrição $\mathbf{w}^T \mathbf{1}_B = 1$:
+$$1 = \mathbf{1}_B^T \mathbf{w}^* = \frac{\lambda}{2} \left( \mathbf{1}_B^T \boldsymbol\Sigma^{-1} \mathbf{1}_B \right) \implies \frac{\lambda}{2} = \frac{1}{\mathbf{1}_B^T \boldsymbol\Sigma^{-1} \mathbf{1}_B}$$
+
+Substituindo de volta na expressão de $\mathbf{w}^*$:
+$$\mathbf{w}^* = \frac{\boldsymbol\Sigma^{-1} \mathbf{1}_B}{\mathbf{1}_B^T \boldsymbol\Sigma^{-1} \mathbf{1}_B}$$
+
+Como provamos na Seção 3, $\mathbf{1}_B$ é autovetor de $\boldsymbol\Sigma$ com autovalor $\lambda_1 = \sigma^2 [1 + (B - 1)\rho]$. Pela propriedade fundamental dos autovalores inversos, $\mathbf{1}_B$ é também autovetor de $\boldsymbol\Sigma^{-1}$, com autovalor associado $\frac{1}{\lambda_1}$:
+$$\boldsymbol\Sigma^{-1} \mathbf{1}_B = \frac{1}{\sigma^2 [1 + (B - 1)\rho]} \mathbf{1}_B$$
+
+Calculando o denominador escalar:
+$$\mathbf{1}_B^T \boldsymbol\Sigma^{-1} \mathbf{1}_B = \mathbf{1}_B^T \left( \frac{1}{\sigma^2 [1 + (B - 1)\rho]} \mathbf{1}_B \right) = \frac{B}{\sigma^2 [1 + (B - 1)\rho]}$$
+
+Substituindo numerador e denominador na fórmula de $\mathbf{w}^*$:
+$$\mathbf{w}^* = \frac{\frac{1}{\sigma^2 [1 + (B - 1)\rho]} \mathbf{1}_B}{\frac{B}{\sigma^2 [1 + (B - 1)\rho]}} = \frac{1}{B} \mathbf{1}_B$$
+
+Logo:
+$$w_b^* = \frac{1}{B} \quad (\forall b = 1, \dots, B) \quad \blacksquare$$
+
+> [!NOTE]
+> **Conclusão:** A média aritmética com pesos idênticos $1/B$ não é uma escolha arbitrária ou ingênua. Ela é o **único estimador linear não-viesado de variância mínima (BLUE)** garantido pelo Teorema de Gauss-Markov multivariado sempre que os modelos base apresentam simetria estatística de variâncias e covariâncias.
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+[Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios" title="Ver exercícios"}
+[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções" title="Ver soluções"}
+:::
+
+::: {.content-visible when-format="revealjs"}
+[Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios" title="Ver exercícios"}
+[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções" title="Ver soluções"}
+:::
+

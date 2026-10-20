@@ -1,6 +1,6 @@
 ---
 title: "Unsupervised Learning"
-date: "today"
+date: "2026-10-22"
 author: "Marcos M. Raimundo"
 categories: [Disciplines, AI, Machine Learning, Unsupervised Learning, Statistics]
 include-after-body:

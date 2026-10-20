@@ -1,0 +1,1 @@
+../../../publications/mraimundo/learning-pareto-stationary-fronts-via-single-pass-backpropag.qmd

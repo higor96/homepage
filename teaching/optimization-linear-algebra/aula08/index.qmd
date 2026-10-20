@@ -116,7 +116,6 @@ y_bin = (y > np.median(y)).astype(float)
 # Revisão e Introdução
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## Revisão Cuidadosa: O Que a Aula 7 Deixou Pronto
 
 Na Aula 7, resolvemos a grande dúvida teórica deixada pelo cálculo multivariado da Aula 6: quando encontramos um ponto de gradiente nulo $\nabla f(\mathbf{x}) = \mathbf{0}$, como saber se atingimos um mínimo, um máximo ou um ponto de sela?
 

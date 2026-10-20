@@ -1,11 +1,21 @@
 ---
 title: "Multi-Objective Dynamics of Learning"
 date: "2026-10-09"
-subtitle: "2026 – 2029"
+subtitle: "2026 – ongoing"
 image: sensible-deep-moo.jpg
 description: "A research line that studies learning as an inherently multi-objective process, seeking to understand how objectives compete and cooperate while a representation is being formed, and how to steer training so that the learned space improves all objectives rather than trading one for another."
 categories: [Multi-Objective Optimization, Deep Learning, Representation Learning, Learning Dynamics, Pareto Sensitivity, Optimization Algorithms]
 participants: [mraimundo]
+listing:
+  # related-publications-listing:start (gerado por generate_project_pages.py — não editar)
+  - id: related-publications
+    contents:
+      - "pubs-by-project/deep_moo_theory/*.qmd"
+      - "../pubs-by-project/deep_moo_theory/*.qmd"
+    type: default
+    sort: "date desc"
+    fields: [title, description]
+  # related-publications-listing:end
 ---
 
 Learning is rarely about a single goal. A model is asked to be accurate and fair, to solve several tasks at once, to serve different clients, domains, or modalities, or to balance competing notions of quality. Even when one loss is written down, it is often an implicit compromise among many. Yet we understand learning almost exclusively through a single-objective lens: objectives are merged into one scalar loss before training starts, and the trade-offs among them are only examined, if at all, once training has finished.
@@ -27,4 +37,9 @@ The project builds on tools from multi-objective optimization (Pareto sensitivit
 * **Theory–Experiment Bridge and Open Tools:** Building controlled benchmarks with known ground-truth features, together with an open-source library for scalarization, sensitivity analysis, and front evaluation, so that claims about how objectives shape learning can be tested directly.
 
 ::: {#participants}
+:::
+
+## Related Publications
+
+::: {#related-publications}
 :::

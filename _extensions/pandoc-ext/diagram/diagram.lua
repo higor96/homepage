@@ -202,10 +202,10 @@ local tikz = {
 
         -- Treat string values as raw LaTeX
         local meta = {
-          ['header-includes'] = user_opts['header-includes'],
+          ['header-includes'] = user_opts['header-includes'] or self.opt['header-includes'],
           ['additional-packages'] = {pandoc.RawInline(
             'latex',
-            stringify(user_opts['additional-packages'] or '')
+            stringify(user_opts['additional-packages'] or self.opt['additional-packages'] or '')
           )},
         }
         local tex_code = pandoc.write(

@@ -1,6 +1,6 @@
 ---
 title: "Multi-objective Optimization and Ensemble Learning for Machine Learning Models"
-date: "2025-01-10"
+date: "2014-01-01"
 subtitle: "2014 – 2025"
 image: multiobjective-machine-learning.jpg
 description: "Research on continuous and many-objective optimization techniques (NISE/MONISE) applied to regularized machine learning, model selection, ensemble generation, and algorithmic fairness."

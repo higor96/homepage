@@ -43,7 +43,9 @@ diagram:
       additional-packages: |
         \usepackage[T1]{fontenc}
         \usepackage[utf8]{inputenc}
-        \usetikzlibrary{shapes.geometric, arrows.meta, positioning}
+        \usepackage{lmodern}
+        \usepackage{amsmath,amssymb}
+        \usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc}
 
 website:
   title: "Marcos M. Raimundo"

@@ -4,7 +4,7 @@ date: "2025-01-28"
 author: "Tommaso Giovannelli, Marcos Medeiros Raimundo, Luis Nunes Vicente"
 author-ids: [mraimundo]
 scholar-ids: [ubsUlagAAAAJ, ibe0jfQAAAAJ, TLkN5_AAAAAJ]
-projects: [moml]
+projects: [deep_moo_theory, moml]
 categories: [Multi-objective Optimization, Pareto Sensitivity, Operations Research]
 description: "Tommaso Giovannelli, Marcos Medeiros Raimundo, Luis Nunes Vicente (2025). arXiv preprint arXiv:2501.16993."
 links:
