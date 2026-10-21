@@ -25,11 +25,11 @@ O curso é estruturado em três blocos fundamentais:
 
 - **Bloco 2: O Cálculo da Otimização Diferenciável (Superfícies de Erro e Sensibilidade)**
   **Objetivo:** Transicionar da geometria linear para a otimização contínua, capacitando o aluno a navegar em superfícies de custo e construir diferenciação computacional.
-  **Conteúdo:** Derivadas parciais, vetor gradiente e matriz Jacobiana aplicados à sensibilidade de modelos; convexidade, matriz Hessiana e garantias de mínimo global; Gradiente Descendente (GD) aplicado à Regressão Logística (Entropia Cruzada); séries de Taylor e regra da cadeia multivariada para propagação de erro em redes neurais; Grafos de Computação e Diferenciação Automática (Backpropagation em modo reverso).
+  **Conteúdo:** Derivadas parciais, vetor gradiente e matriz Jacobiana aplicados à sensibilidade de modelos; convexidade, matriz Hessiana e garantias de mínimo global; Gradiente Descendente (GD) aplicado à Regressão Logística (Entropia Cruzada); regra da cadeia multivariada e retropropagação em redes neurais; Grafos de Computação e Diferenciação Automática (Backpropagation em modo reverso).
 
 - **Bloco 3: Dinâmica Avançada e Escala (Otimização Estocástica, Precondicionamento e Esparsidade)**
   **Objetivo:** Estudar o comportamento de otimizadores de escala em contextos com ruído estocástico, mal condicionamento do espaço e penalidades não-diferenciáveis.
-  **Conteúdo:** Gradiente Descendente Estocástico (SGD) e impacto de mini-batches; aceleradores de momento (Polyak e Nesterov); métodos de segunda ordem (Newton) e precondicionamento diagonal adaptativo (RMSProp, Adam); precondicionamento estruturado de tensores (Shampoo), ortogonalização via iterações de Newton-Schulz e o otimizador Muon; otimização não-suave com subgradientes, operadores proximais e o algoritmo ISTA/FISTA para indução de esparsidade ($L_1$).
+  **Conteúdo:** Gradiente Descendente Estocástico (SGD) e impacto de mini-batches; séries de Taylor multivariadas e modelos quadráticos de curvatura; aceleradores de momento (Polyak e Nesterov); métodos de segunda ordem (Newton) e precondicionamento diagonal adaptativo (RMSProp, Adam); precondicionamento estruturado de tensores (Shampoo), ortogonalização via iterações de Newton-Schulz e o otimizador Muon; otimização não-suave com subgradientes, operadores proximais e o algoritmo ISTA/FISTA para indução de esparsidade ($L_1$).
 
 ## Atividades e Avaliação
 

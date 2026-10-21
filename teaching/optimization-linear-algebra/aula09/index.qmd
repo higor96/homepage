@@ -1,5 +1,5 @@
 ---
-title: "Aula 9: Séries de Taylor e a Regra da Cadeia Multivariada"
+title: "Aula 9: Funções Compostas, Redes Neurais e Diferenciação Automática"
 subtitle: "Otimização e Álgebra Linear para Machine Learning"
 author: "Marcos M. Raimundo — Instituto de Computação, UNICAMP"
 date: "2026-10-15"
@@ -39,15 +39,16 @@ format:
     theme: [simple, ../../lesson-theme.scss]
     fig-width: 6
     fig-height: 3.8
-jupyter: homepage
+jupyter: python3
 execute:
+  echo: false
   warning: false
   message: false
 ---
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-[Slides](slides.html){.see-all aria-label="Ver slides" title="Ver slides"}
-[Lista de aulas](../index.qmd){.see-all .lesson-list-link aria-label="Lista de aulas" title="Lista de aulas"}
+[Slides](slides.html){.see-all .slides-link aria-label="Ver slides da aula" title="Ver slides da aula"}
+[Lista de aulas](../index.qmd){.see-all .lesson-list-link aria-label="Voltar à lista de aulas" title="Voltar à lista de aulas"}
 :::
 
 ```{python}
@@ -71,11 +72,11 @@ warnings.filterwarnings("ignore")
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams.update({"figure.dpi": 120, "font.size": 11})
 
-COR_A   = "#0085CA"   # azul — elemento principal
-COR_B   = "#FF5E00"   # laranja — contraste
-COR_C   = "#E03C31"   # vermelho — alerta
-COR_NEU = "#5D6D7E"   # neutro
-COR_VERDE = "#1b9e77" # verde — confirmação
+COR_A     = "#0085CA"   # azul institucional — elemento principal
+COR_B     = "#FF5E00"   # laranja — contraste / ênfase
+COR_C     = "#E03C31"   # vermelho — alerta / erro
+COR_NEU   = "#5D6D7E"   # neutro escuro
+COR_VERDE = "#1b9e77"   # verde — confirmação / ótimo
 
 def brl(x, nd=2):
     """Número com vírgula decimal e espaço fino de milhar."""
@@ -87,132 +88,190 @@ def sci(x, nd=1):
     m, e = f"{x:.{nd}e}".split("e")
     return Markdown(f"{m.replace('.', '{,}')}\\cdot 10^{{{int(e)}}}")
 
-# --- Problema-fio: California Housing (o mesmo X da Aula 6, 7 e 8) -------
+# --- Dataset-fio: California Housing -----------------------------------
 _housing = load_dataset("gvlassis/california_housing")["train"].to_pandas()
 COLS = ["MedInc", "HouseAge", "AveRooms", "AveBedrms"]
 X_raw = _housing[COLS].to_numpy()
 y_raw = _housing["MedHouseVal"].to_numpy()
 N_total, d_in = X_raw.shape
 
-# Padronização Z-score
+# Padronização Z-score (essencial da Aula 8)
 mu_X = np.mean(X_raw, axis=0)
 std_X = np.std(X_raw, axis=0)
 X_pad = (X_raw - mu_X) / std_X
 
-# Subamostra representativa para cálculo rápido de experimentos de Taylor
+# Subconjunto de validação rápida (primeiras 500 amostras)
 np.random.seed(42)
-idx_sub = np.random.choice(N_total, size=1000, replace=False)
-X_sub = X_pad[idx_sub]
-y_sub = y_raw[idx_sub]
+N_sub = 500
+X_sub = X_pad[:N_sub]
+y_sub = y_raw[:N_sub]
 
-# --- Arquitetura do MLP de 2 Camadas (4 -> 3 -> 1) ---------------------
-# Camada oculta: 3 neurônios com ativação sigmoide
-# Camada de saída: 1 neurônio linear
-d_hidden = 3
-d_out = 1
+# --- Implementação do Motor de Autodiff Reverso (Value) ----------------
+class Value:
+    """Nó atômico escalar de um Grafo Acíclico Direcionado (DAG)."""
+    def __init__(self, data, _children=(), _op='', label=''):
+        self.data = float(data)
+        self.grad = 0.0
+        self._backward = lambda: None
+        self._prev = set(_children)
+        self._op = _op
+        self.label = label
 
-# Inicialização reproduzível dos pesos
-W1_init = np.array([
-    [ 0.25, -0.15,  0.30, -0.10],
-    [-0.20,  0.40, -0.05,  0.15],
-    [ 0.10, -0.30,  0.50, -0.25]
-]) # (3, 4)
-b1_init = np.array([0.05, -0.10, 0.02]) # (3,)
-w2_init = np.array([0.45, -0.35, 0.60]) # (3,)
-b2_init = 1.85 # escalar
+    def __repr__(self):
+        return f"Value(data={self.data:.4f}, grad={self.grad:.4f})"
 
-def sigmoid(z):
-    return 1.0 / (1.0 + np.exp(-np.clip(z, -20, 20)))
+    def __add__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data + other.data, (self, other), '+')
+        def _backward():
+            self.grad += 1.0 * out.grad
+            other.grad += 1.0 * out.grad
+        out._backward = _backward
+        return out
 
-def d_sigmoid(z):
-    s = sigmoid(z)
-    return s * (1.0 - s)
+    def __radd__(self, other):
+        return self + other
 
-def forward_pass(X, W1, b1, w2, b2):
-    # z1: (N, 3), a1: (N, 3)
-    z1 = X @ W1.T + b1
-    a1 = sigmoid(z1)
-    # y_hat: (N,)
-    y_hat = a1 @ w2 + b2
-    return z1, a1, y_hat
+    def __mul__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data * other.data, (self, other), '*')
+        def _backward():
+            self.grad += other.data * out.grad
+            other.grad += self.data * out.grad
+        out._backward = _backward
+        return out
 
-def compute_loss(y_hat, y):
-    return 0.5 * np.mean((y_hat - y)**2)
+    def __rmul__(self, other):
+        return self * other
 
-# Perda inicial no ponto de expansão theta_0
-z1_0, a1_0, y_hat_0 = forward_pass(X_sub, W1_init, b1_init, w2_init, b2_init)
-L_0 = compute_loss(y_hat_0, y_sub)
+    def __sub__(self, other):
+        return self + (-other)
 
-# --- Gradientes Analíticos via Regra da Cadeia --------------------------
-N_s = len(y_sub)
-res = y_hat_0 - y_sub # (N,)
-delta2 = res / N_s     # derivada dL/dy_hat escalada por 1/N (N,)
+    def __rsub__(self, other):
+        return Value(other) + (-self)
 
-grad_w2 = a1_0.T @ delta2 # (3,)
-grad_b2 = np.sum(delta2)   # escalar
+    def __neg__(self):
+        return self * -1.0
 
-# delta1_i = delta2_i * w2 * sigma'(z1_i) -> (N, 3)
-delta1 = (delta2[:, None] * w2_init[None, :]) * d_sigmoid(z1_0)
-grad_W1 = delta1.T @ X_sub # (3, 4)
-grad_b1 = np.sum(delta1, axis=0) # (3,)
+    def __pow__(self, other):
+        assert isinstance(other, (int, float))
+        out = Value(self.data ** other, (self,), f'**{other}')
+        def _backward():
+            self.grad += (other * (self.data ** (other - 1))) * out.grad
+        out._backward = _backward
+        return out
 
-# Vetorização de parâmetros e gradientes
-theta_0 = np.concatenate([W1_init.ravel(), b1_init, w2_init, [b2_init]])
-grad_theta = np.concatenate([grad_W1.ravel(), grad_b1, grad_w2, [grad_b2]])
-P_dim = len(theta_0) # 12 + 3 + 3 + 1 = 19 parâmetros
+    def exp(self):
+        out = Value(np.exp(np.clip(self.data, -30, 30)), (self,), 'exp')
+        def _backward():
+            self.grad += out.data * out.grad
+        out._backward = _backward
+        return out
 
-def unpack_params(theta):
-    W1 = theta[0:12].reshape(3, 4)
-    b1 = theta[12:15]
-    w2 = theta[15:18]
-    b2 = theta[18]
-    return W1, b1, w2, b2
+    def cos(self):
+        out = Value(np.cos(self.data), (self,), 'cos')
+        def _backward():
+            self.grad += (-np.sin(self.data)) * out.grad
+        out._backward = _backward
+        return out
 
-def loss_at_theta(theta):
-    W1, b1, w2, b2 = unpack_params(theta)
-    _, _, y_h = forward_pass(X_sub, W1, b1, w2, b2)
-    return compute_loss(y_h, y_sub)
+    def relu(self):
+        out = Value(max(0.0, self.data), (self,), 'ReLU')
+        def _backward():
+            self.grad += (1.0 if self.data > 0 else 0.0) * out.grad
+        out._backward = _backward
+        return out
 
-# Verificação de gradiente por diferenças finitas centrais
-grad_num = np.zeros(P_dim)
-eps_fd = 1e-5
-for p in range(P_dim):
-    tp_plus = theta_0.copy(); tp_plus[p] += eps_fd
-    tp_minus = theta_0.copy(); tp_minus[p] -= eps_fd
-    grad_num[p] = (loss_at_theta(tp_plus) - loss_at_theta(tp_minus)) / (2 * eps_fd)
+    def sigmoid(self):
+        s = 1.0 / (1.0 + np.exp(-np.clip(self.data, -20, 20)))
+        out = Value(s, (self,), 'sigmoid')
+        def _backward():
+            self.grad += (s * (1.0 - s)) * out.grad
+        out._backward = _backward
+        return out
 
-err_grad_rel = np.linalg.norm(grad_theta - grad_num) / (np.linalg.norm(grad_theta) + np.linalg.norm(grad_num))
+    def backward(self):
+        topo = []
+        visited = set()
+        def build_topo(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v._prev:
+                    build_topo(child)
+                topo.append(v)
+        build_topo(self)
+        self.grad = 1.0
+        for node in reversed(topo):
+            node._backward()
 
-# --- Hessiana Numérica em theta_0 para Avaliação de Taylor 2ª Ordem -----
-# Para avaliar o modelo de Taylor de 2ª ordem em uma direção h
-# Direção de teste normalizada h_dir
-np.random.seed(101)
-h_dir = np.random.randn(P_dim)
-h_dir /= np.linalg.norm(h_dir)
+# --- Exemplo Canônico de Autodiff (Deisenroth §5.6.2): f(x) ------------
+# f(x) = sqrt(x^2 + exp(x^2)) + cos(x^2 + exp(x^2))
+x_test = 1.5
+vx = Value(x_test)
+va = vx * vx                      # a = x^2
+vb = va.exp()                     # b = exp(a)
+vc = va + vb                      # c = a + b
+vd = vc ** 0.5                    # d = sqrt(c)
+ve = vc.cos()                     # e = cos(c)
+vf = vd + ve                      # f = d + e
+vf.backward()
+autodiff_exact_val = vx.grad
 
-# Curvatura direcional h^T H h via diferença finita de gradientes
-def directional_hessian(h):
-    # (grad(theta + eps*h) - grad(theta - eps*h)) / (2*eps) escalonado com h
-    eps = 1e-4
-    W1_p, b1_p, w2_p, b2_p = unpack_params(theta_0 + eps * h)
-    _, a1_p, yh_p = forward_pass(X_sub, W1_p, b1_p, w2_p, b2_p)
-    d2_p = (yh_p - y_sub) / N_s
-    gw2_p = a1_p.T @ d2_p; gb2_p = np.sum(d2_p)
-    d1_p = (d2_p[:, None] * w2_p[None, :]) * d_sigmoid(X_sub @ W1_p.T + b1_p)
-    gW1_p = d1_p.T @ X_sub; gb1_p = np.sum(d1_p, axis=0)
-    g_plus = np.concatenate([gW1_p.ravel(), gb1_p, gw2_p, [gb2_p]])
+# Derivada simbólica exata para comparação
+c_num = x_test**2 + np.exp(x_test**2)
+dc_dx = 2*x_test + 2*x_test*np.exp(x_test**2)
+df_exact = (0.5 / np.sqrt(c_num) - np.sin(c_num)) * dc_dx
 
-    W1_m, b1_m, w2_m, b2_m = unpack_params(theta_0 - eps * h)
-    _, a1_m, yh_m = forward_pass(X_sub, W1_m, b1_m, w2_m, b2_m)
-    d2_m = (yh_m - y_sub) / N_s
-    gw2_m = a1_m.T @ d2_m; gb2_m = np.sum(d2_m)
-    d1_m = (d2_m[:, None] * w2_m[None, :]) * d_sigmoid(X_sub @ W1_m.T + b1_m)
-    gW1_m = d1_m.T @ X_sub; gb1_m = np.sum(d1_m, axis=0)
-    g_minus = np.concatenate([gW1_m.ravel(), gb1_m, gw2_m, [gb2_m]])
+# --- Instabilidade Numérica de Diferenças Finitas ----------------------
+steps_h = np.logspace(-16, 0, 100)
+err_forward_diff = []
+err_central_diff = []
 
-    return np.dot((g_plus - g_minus) / (2 * eps), h)
+def f_eval(x):
+    u = x**2 + np.exp(x**2)
+    return np.sqrt(u) + np.cos(u)
 
-h_curv_dir = directional_hessian(h_dir)
+for h in steps_h:
+    df_fwd = (f_eval(x_test + h) - f_eval(x_test)) / h
+    df_ctr = (f_eval(x_test + h) - f_eval(x_test - h)) / (2 * h)
+    err_forward_diff.append(abs(df_fwd - df_exact))
+    err_central_diff.append(abs(df_ctr - df_exact))
+
+# --- Simulação da Complexidade de Baur-Strassen ------------------------
+dims = [2, 5, 10, 25, 50, 100, 200, 400, 800]
+time_forward = [float(d) for d in dims]
+time_reverse = [3.5 for _ in dims]
+
+# --- Treinamento Comparativo do MLP (Analítico vs Autodiff) ------------
+np.random.seed(1337)
+W1_init = np.random.randn(3, 4) * 0.2
+b1_init = np.zeros(3)
+w2_init = np.random.randn(1, 3) * 0.2
+b2_init = 0.0
+
+def sigmoid_np(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -15, 15)))
+
+def step_analitico(X, y, W1, b1, w2, b2):
+    N = len(y)
+    z1 = X @ W1.T + b1          # (N, 3)
+    a1 = sigmoid_np(z1)         # (N, 3)
+    y_hat = (a1 @ w2.T).ravel() + b2 # (N,)
+    err = y_hat - y             # (N,)
+    loss = 0.5 * np.mean(err**2)
+    
+    delta2 = err / N            # (N,)
+    grad_w2 = delta2 @ a1       # (1, 3)
+    grad_b2 = np.sum(delta2)
+    
+    da1 = np.outer(delta2, w2)  # (N, 3)
+    delta1 = da1 * (a1 * (1 - a1)) # (N, 3)
+    grad_W1 = delta1.T @ X      # (3, 4)
+    grad_b1 = np.sum(delta1, axis=0)
+    
+    return loss, grad_W1, grad_b1, grad_w2, grad_b2
+
+loss_init, g_W1, g_b1, g_w2, g_b2 = step_analitico(X_sub, y_sub, W1_init, b1_init, w2_init, b2_init)
 ```
 
 # Revisão e Introdução
@@ -220,833 +279,1389 @@ h_curv_dir = directional_hessian(h_dir)
 ::: {.content-visible when-format="html" unless-format="revealjs"}
 ## Revisão Cuidadosa: O Que a Aula 8 Deixou Pronto
 
-Na **Aula 8**, estudamos a fundo o método clássico de **Descida do Gradiente** (*Gradient Descent*):
-1. **Regra de Atualização:** Formulamos o passo iterativo $\mathbf{w}_{k+1} = \mathbf{w}_k - \alpha \nabla f(\mathbf{w}_k)$, motivado geometricamente pela direção ortogonal às curvas de nível que maximiza a taxa instantânea de decrescimento da função.
-2. **Lema da Descida e Limite do Passo:** Provamos que, para funções cujo gradiente possui constante de Lipschitz $L$ ($\|\nabla f(\mathbf{x}) - \nabla f(\mathbf{y})\| \le L\|\mathbf{x} - \mathbf{y}\|$), o decrescimento monotônico estrito é garantido se e somente se o tamanho de passo satisfaz $0 < \alpha < \frac{2}{L}$.
-3. **Dinâmica Espectral em Quadráticas:** Em formas quadráticas $f(\mathbf{w}) = \frac{1}{2}\mathbf{w}^T A \mathbf{w} - \mathbf{b}^T \mathbf{w}$ com $A \succ 0$, a decomposição espectral $A = Q \Lambda Q^T$ permitiu desacoplar os erros modais em $\tilde{e}_{k+1, i} = (1 - \alpha \lambda_i)\tilde{e}_{k, i}$, culminando na taxa ótima de contração de Chebyshev $\rho^\star = \frac{\kappa - 1}{\kappa + 1}$, controlada estritamente pelo número de condição $\kappa = \lambda_{\max}/\lambda_{\min}$.
-4. **Regressão Logística e Curvatura Dinâmica:** Vimos que a perda de entropia cruzada não possui solução analítica fechada ($\nabla \mathcal{L} = \mathbf{0}$ é transcendental) e exibe uma Hessiana dinâmica $\nabla^2 \mathcal{L} = \frac{1}{N}X^T S(\mathbf{w}) X$.
+Na **Aula 8**, formalizamos a otimização contínua irrestrita através do algoritmo de **Descida do Gradiente** (*Gradient Descent* - GD). Sob a hipótese de diferenciabilidade e $L$-suavidade (Lema da Descida), provamos que avançar na direção oposta ao gradiente $-\nabla f(\mathbf{w})$ garante descida monotônica do custo quando o passo satisfaz $\alpha < 2/L$. Aplicamos o algoritmo à Regressão Linear e à Regressão Logística, onde a função de perda de Entropia Cruzada é estritamente convexa e o gradiente possui uma expressão analítica compacta:
 
-Ao concluir a Aula 8, contudo, deparamo-nos com uma fronteira teórica decisiva: e quando o modelo preditivo não é linear nos parâmetros? Como calcular gradientes e prever a curvatura quando as funções são profundamente aninhadas em camadas, como nas **Redes Neurais Artificiais**?
+$$\nabla_{\mathbf{w}} \mathcal{L} = \frac{1}{N} X^T (\hat{\mathbf{y}} - \mathbf{y})$$
+
+Contudo, tanto a regressão linear quanto a logística compartilham uma limitação estrutural profunda: **são modelos lineares nos parâmetros**. O preditor depende diretamente do hiperplano $z = \mathbf{w}^T \mathbf{x} + b$. No California Housing, onde a relação entre renda média (`MedInc`), idade da casa (`HouseAge`) e o valor do imóvel (`MedHouseVal`) é fortemente não-linear, modelos lineares subajustam os dados.
 :::
 
 ::: {.content-visible when-format="revealjs"}
 ## Da Aula 8: O Que Já Temos
 
-::: {.fragment}
-- **Descida do Gradiente:** $\mathbf{w}_{k+1} = \mathbf{w}_k - \alpha \nabla f(\mathbf{w}_k)$.
-- **Lema da Descida:** sob gradiente $L$-Lipschitziano, descida estrita garantida para $0 < \alpha < \frac{2}{L}$.
-- **Dinâmica Modal:** $\tilde{e}_{k, i} = (1 - \alpha \lambda_i)^k \tilde{e}_{0, i}$ com contração ótima de Chebyshev $\rho^\star = \frac{\kappa - 1}{\kappa + 1}$.
-- **Curvatura Dinâmica:** na regressão logística, $H(\mathbf{w}) = \frac{1}{N}X^T S(\mathbf{w}) X$ varia continuamente ao longo da trajetória.
+- **Descida do Gradiente:** Regra iterativa $\mathbf{w}_{k+1} = \mathbf{w}_k - \alpha \nabla f(\mathbf{w}_k)$ com garantia de descida sob $0 < \alpha < 2/L$.
+- **Modelos Lineares:** Regressão Linear ($X\mathbf{w}$) e Logística ($\sigma(X\mathbf{w})$) geram gradientes simples e superfícies de custo convexas.
+- **O Limite Estrutural:** Modelos lineares não aprendem representações nem interações de ordem superior entre atributos.
+- **A Necessidade:** Empilhar camadas de transformações lineares intercaladas por não-linearidades — os **Perceptrons Multicamadas** (*Multilayer Perceptrons* - MLPs).
 :::
 
-::: {.fragment .callout-important}
-## O Que Ficou em Aberto
-Modelos lineares e logísticos mapeiam $\mathbf{x} \mapsto \mathbf{w}^T \mathbf{x}$. O que acontece quando compomos múltiplas camadas não-lineares $\mathbf{x} \mapsto \sigma(W_1 \mathbf{x}) \mapsto W_2 \sigma(W_1 \mathbf{x})$? Como derivar parâmetros ocultos e como prever o comportamento de perdas não-convexas arbitrariamente complexas?
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## O Pesadelo da Diferenciação Simbólica
+
+Para motivar por que precisamos de algoritmos especializados, examine a função escalar univariada a seguir:
+
+$$f(x) = \sqrt{x^2 + \exp(x^2)} + \cos(x^2 + \exp(x^2))$$
+
+Se tentarmos calcular a derivada $\frac{df}{dx}$ aplicando as regras usuais de diferenciação simbólica (regra da cadeia, da soma e do produto) diretamente no papel, obtemos:
+
+$$\frac{df}{dx} = \frac{2x + 2x\exp(x^2)}{2\sqrt{x^2 + \exp(x^2)}} - \sin\big(x^2 + \exp(x^2)\big)\cdot\big(2x + 2x\exp(x^2)\big)$$
+
+Fatorando e simplificando:
+
+$$\frac{df}{dx} = 2x\big(1 + \exp(x^2)\big)\left[ \frac{1}{2\sqrt{x^2 + \exp(x^2)}} - \sin\big(x^2 + \exp(x^2)\big) \right]$$
+
+Observe o que aconteceu:
+1. O termo $x^2 + \exp(x^2)$ e sua derivada $2x(1 + \exp(x^2))$ foram **recalculados e duplicados múltiplas vezes**.
+2. Em código computacional, avaliar essa fórmula expandida é redundante e numericamente ineficiente.
+3. Se uma função com apenas 5 operações elementares já sofre dessa duplicação, imagine uma rede neural com **dezenas de camadas compostas**: tentar escrever a expressão simbólica fechada do gradiente gera uma explosão combinatória de termos (*expression swell*).
+:::
+
+::: {.content-visible when-format="revealjs"}
+## O Pesadelo da Diferenciação Simbólica
+
+Considere uma função composta com subexpressões repetidas:
+$$f(x) = \sqrt{x^2 + \exp(x^2)} + \cos(x^2 + \exp(x^2))$$
+
+::: {.fragment}
+Aplicando a regra da cadeia analítica diretamente:
+$$\frac{df}{dx} = \frac{2x + 2x\exp(x^2)}{2\sqrt{x^2 + \exp(x^2)}} - \sin(x^2 + \exp(x^2))\cdot(2x + 2x\exp(x^2))$$
+:::
+
+::: {.fragment}
+Simplificando os termos comuns:
+$$\frac{df}{dx} = 2x(1 + \exp(x^2))\left[ \frac{1}{2\sqrt{x^2 + \exp(x^2)}} - \sin(x^2 + \exp(x^2)) \right]$$
+:::
+
+::: {.fragment .callout-warning}
+## O Problema do Inchaço Algébrico
+- Escrever explicitamente o gradiente expandido gera expressões longas e cheias de subexpressões repetidas.
+- Em redes neurais profundas, a expansão simbólica explode exponencialmente (*expression swell*).
 :::
 :::
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
 ## Ideia Central
 
-A **Série de Taylor Multivariada** é a ferramenta matemática que substitui superfícies analíticas intrincadas por aproximações polinomiais locais tratáveis: uma aproximação de 1ª ordem substitui a função por seu hiperplano tangente, enquanto a aproximação de 2ª ordem a substitui por uma tigela parabólica osculadora governada pela matriz Hessiana. 
-
-Ao mesmo tempo, a **Regra da Cadeia Multivariada** nos fornece o alicerce operacional para propagar derivadas através de composições de funções vetoriais. Em conjunto, essas duas teorias explicam exatamente por que os otimizadores funcionam em Redes Neurais (*Deep Learning*): o gradiente nos diz para onde andar porque ele resolve localmente o melhor modelo linear sob uma região de confiança, e a regra da cadeia propaga esse sinal da saída até a primeira camada da rede.
+Em vez de expandir expressões simbólicas globais, os frameworks modernos de Inteligência Artificial baseiam-se em dois princípios fundamentais:
+1. **Reutilização de Computações no Backpropagation:** Em redes neurais em camadas, quase toda a computação intermediária necessária para calcular o gradiente da camada $i$ já foi calculada ao avaliar o gradiente da camada $i+1$.
+2. **Diferenciação Automática em Grafos:** Decompomos qualquer programa em um Grafo Acíclico Direcionado (DAG) de operações atômicas simples, acumulando derivadas numéricas exatas na ordem reversa da execução.
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## Ideia Central (Ausubel)
+## Ideia Central
 
-::: {.callout-note}
-## O Princípio da Localidade e da Composição
-- **Série de Taylor:** Não podemos compreender a paisagem inteira de uma perda não-linear, mas em uma vizinhança suficientemente pequena $\|\mathbf{h}\| \ll 1$, qualquer função suave comporta-se como um plano (1ª ordem) ou como uma forma quadrática (2ª ordem).
-- **Regra da Cadeia:** Uma rede neural profunda é simplesmente uma gigantesca composição de funções afins e não-lineares elementares. O gradiente total é o produto encadeado de operadores lineares locais (Jacobianos).
+::: {.callout-note icon=false}
+## A Dupla Face da Diferenciação em Deep Learning
+- **1. Reutilização de Computações:** O gradiente da camada $i$ reaproveita quase todo o cálculo já realizado na camada $i+1$, adicionando apenas termos locais.
+- **2. Diferenciação Automática em DAGs:** Em vez de fórmulas gigantescas no papel, propagamos valores numéricos de sensibilidade através de operações atômicas elementares, garantindo tempo de execução linear.
 :::
 :::
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
 ## Roteiro da Aula
 
-Nesta aula, responderemos a cinco perguntas fundamentais:
-1. **O que é o Teorema de Taylor Multivariado e como quantificar o erro das aproximações locais de 1ª e 2ª ordens?**
-2. **Qual é a conexão matemática formal entre a aproximação de Taylor e o passo de Gradient Descent?**
-3. **Como formular a Regra da Cadeia Multivariada matricialmente sob a convenção *denominator layout*?**
-4. **Como deduzir analiticamente a propagação retrógrada de gradientes (*backpropagation*) em uma rede neural multicamadas (MLP)?**
-5. **Qual é o raio de fidelidade das aproximações lineares e quadráticas em um modelo neural real no California Housing?**
+Nesta aula, responderemos a quatro perguntas centrais:
+
+1. **Como a Regra da Cadeia explora o reuso de computações no Backpropagation analítico através das 3 equações canônicas?**
+2. **Por que os paradigmas manual, numérico e simbólico falham em modelos profundos, e como a Diferenciação Automática resolve isso via Grafos Acíclicos Direcionados (DAGs) e variáveis intermediárias?**
+3. **Como a regra da cadeia multivariada se propaga em grafos com bifurcações através da soma sobre múltiplos caminhos direcionados?**
+4. **Qual a dualidade matemática entre os modos Forward e Reverse pela associatividade da regra da cadeia, e por que o Teorema de Baur-Strassen torna o modo reverso o alicerce do Machine Learning?**
 :::
 
 ::: {.content-visible when-format="revealjs"}
 ## Roteiro da Aula
 
-::: {.fragment}
-1. **O Teorema de Taylor Multivariado:** expansões de 1ª e 2ª ordens e seus restos de aproximação.
-2. **A Conexão com Otimização:** o passo de Gradient Descent como minimizador de Taylor sob penalidade proximal.
-3. **A Regra da Cadeia Matricial:** Jacobianos e composições sob *denominator layout*.
-4. **Sensibilidades em Redes Neurais:** dedução passo a passo dos gradientes em MLPs ($W^{(l)}$ e $\mathbf{b}^{(l)}$).
-5. **Experimento no California Housing:** quantificação numérica do raio de validade local de Taylor.
-:::
+- **Pergunta 1:** Como a Regra da Cadeia explora o reuso de prefixos no Backpropagation analítico ($\boldsymbol{\delta}^{(l)}$ e $\nabla_W \mathcal{L} = \boldsymbol{\delta} \mathbf{a}^T$)?
+- **Pergunta 2:** Por que cálculo manual, numérico e simbólico falham em escala, e como DAGs com variáveis intermediárias viabilizam a Diferenciação Automática?
+- **Pergunta 3:** Como a sensibilidade se propaga em nós bifurcados somando todos os caminhos direcionados até a saída?
+- **Pergunta 4:** Qual a dualidade Forward vs. Reverse via associatividade de produtos matriciais e como o Teorema de Baur-Strassen garante tempo linear?
 :::
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## Problema Motivador: O Perceptron Multicamadas no California Housing
+## Problema Motivador
 
-Considere o problema de prever o valor mediano das residências da Califórnia (`MedHouseVal`). Nas Aulas 2 a 8, usamos modelos lineares e logísticos da forma $\hat{y} = \mathbf{w}^T \mathbf{x}$. Agora, para capturar interações complexas entre atributos como renda e idade dos imóveis, introduzimos uma camada intermediária de neurônios ocultos com ativação não-linear:
+Considere o dataset **California Housing** padronizado com $d = 4$ atributos (`MedInc`, `HouseAge`, `AveRooms`, `AveBedrms`). Em vez de um modelo linear, construímos um MLP com uma camada oculta de 3 neurônios e função de ativação sigmoide:
+
 $$\mathbf{z}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)} \in \mathbb{R}^3, \quad \mathbf{a}^{(1)} = \sigma(\mathbf{z}^{(1)}) \in \mathbb{R}^3, \quad \hat{y} = \mathbf{w}^{(2)T}\mathbf{a}^{(1)} + b^{(2)} \in \mathbb{R}$$
-onde $\sigma(z) = \frac{1}{1 + e^{-z}}$ é a função logística. A perda quadrática média sobre $N$ amostras é dada por:
-$$\mathcal{L}(\boldsymbol{\theta}) = \frac{1}{2N}\sum_{i=1}^N \big(\hat{y}_i(\boldsymbol{\theta}) - y_i\big)^2, \quad \boldsymbol{\theta} = \big(W^{(1)}, \mathbf{b}^{(1)}, \mathbf{w}^{(2)}, b^{(2)}\big) \in \mathbb{R}^{19}$$
 
-Aqui emergem dois enigmas imediatos:
-1. **Como derivar os pesos da camada oculta $W^{(1)}$?** A matriz $W^{(1)}$ não toca a função de perda $\mathcal{L}$ diretamente; ela está sepultada sob a ativação $\sigma$, o produto por $\mathbf{w}^{(2)}$ e a soma de resíduos.
-2. **Como prever a variação da perda $\Delta \mathcal{L}$ para uma perturbação nos parâmetros $\mathbf{h}$?** Se alterarmos $\boldsymbol{\theta} \leftarrow \boldsymbol{\theta} + \mathbf{h}$, a perda cresce ou diminui? Até que magnitude $\|\mathbf{h}\|$ podemos confiar na previsão do gradiente?
+com função de perda quadrática $\mathcal{L} = \frac{1}{2}(\hat{y} - y)^2$. 
+
+Enquanto derivar a perda em relação a $\mathbf{w}^{(2)}$ é trivial (pois ele multiplica diretamente $\mathbf{a}^{(1)}$), derivar em relação à matriz de pesos oculta $W^{(1)} \in \mathbb{R}^{3 \times 4}$ exige rastrear como cada componente $W^{(1)}_{jk}$ afeta a pré-ativação $z^{(1)}_j$, que afeta a ativação $a^{(1)}_j$, que por sua vez altera $\hat{y}$ e, finalmente, a perda $\mathcal{L}$.
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## O Problema Motivador: MLP de 2 Camadas
+## O Dilema dos Parâmetros Ocultos
 
-::: {.callout-note}
-## Arquitetura Não-Linear ($d=4 \to h=3 \to 1$)
-$$\mathbf{z}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}, \quad \mathbf{a}^{(1)} = \sigma(\mathbf{z}^{(1)}), \quad \hat{y} = \mathbf{w}^{(2)T}\mathbf{a}^{(1)} + b^{(2)}$$
-$$\mathcal{L}(\boldsymbol{\theta}) = \frac{1}{2N}\sum_{i=1}^N (\hat{y}_i - y_i)^2, \quad \boldsymbol{\theta} \in \mathbb{R}^{19}$$
-:::
-
-::: {.fragment}
-- **Dilema 1 (Cálculo):** Os pesos $W^{(1)}$ afetam $\mathbf{z}^{(1)}$, que afeta $\mathbf{a}^{(1)}$, que afeta $\hat{y}$, que afeta $\mathcal{L}$. Como formalizar essa cadeia sem cometer erros dimensionais?
-- **Dilema 2 (Aproximação):** Como aproximar $\mathcal{L}(\boldsymbol{\theta} + \mathbf{h})$ ao redor de $\boldsymbol{\theta}_0$? Em que regime $\|\mathbf{h}\|$ o gradiente fornece uma bússola confiável?
+::: {.callout-important}
+## Problema Motivador: Arquitetura $4 \to 3 \to 1$ no California Housing
+- **Camada Oculta:** $\mathbf{z}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)} \in \mathbb{R}^3$ e $\mathbf{a}^{(1)} = \sigma(\mathbf{z}^{(1)})$.
+- **Predição Final:** $\hat{y} = \mathbf{w}^{(2)T}\mathbf{a}^{(1)} + b^{(2)}$.
+- **O Desafio:** Como calcular $\nabla_{W^{(1)}}\mathcal{L}$ se $W^{(1)}$ que está em camada intermediária?
 :::
 :::
 
-## Pausa Ativa 1: O Dilema da Composição e da Aproximação
+::: {.fig-resize style="width: 85%; margin: 0 auto;"}
+```{.tikz}
+\definecolor{icblue}{HTML}{0085CA}
+\definecolor{icorange}{HTML}{FF5E00}
+\definecolor{icred}{HTML}{E03C31}
+\begin{tikzpicture}[
+  neuron/.style={circle, draw=icblue, fill=icblue!8, minimum size=0.85cm,
+                 inner sep=1pt, font=\small},
+  outnode/.style={circle, draw=icblue, fill=icblue!15, minimum size=0.85cm,
+              inner sep=1pt, font=\small},
+  loss/.style={rectangle, draw=icred, fill=icred!8, rounded corners=3pt,
+               minimum size=0.85cm, inner sep=4pt, font=\small},
+  edge/.style={-Stealth, color=gray!60},
+  hot/.style={-Stealth, very thick, color=icorange},
+  lbl/.style={font=\footnotesize, color=icorange, fill=white, inner sep=1pt},
+  op/.style={font=\footnotesize, color=black!75},
+  dim/.style={font=\footnotesize, color=black!60}
+]
+  % entradas x_k
+  \foreach \k/\y in {1/2.1, 2/0.7, 3/-0.7, 4/-2.1}
+    \node (x\k) [neuron] at (0,\y) {$x_{\k}$};
+  % pré-ativações z_j e ativações a_j
+  \foreach \j/\y in {1/1.6, 2/0, 3/-1.6} {
+    \node (z\j) [neuron] at (3.8,\y) {$z^{(1)}_{\j}$};
+    \node (a\j) [neuron] at (5.8,\y) {$a^{(1)}_{\j}$};
+  }
+  \node (yh) [outnode] at (8.5,0) {$\hat{y}$};
+  \node (L)  [loss] at (11.0,0) {$\mathcal{L}$};
+
+  % arestas W^{(1)}_{jk}: x_k -> z_j
+  \foreach \k in {1,2,3,4}
+    \foreach \j in {1,2,3}
+      \draw [edge] (x\k) -- (z\j);
+  % sigma elemento a elemento: z_j -> a_j
+  \foreach \j in {1,2,3}
+    \draw [edge] (z\j) -- (a\j);
+  % arestas w^{(2)}_j: a_j -> y_hat
+  \foreach \j in {1,2,3}
+    \draw [edge] (a\j) -- (yh);
+
+  % caminho destacado de W^{(1)}_{11} até L (O Dilema)
+  \draw [hot] (x1) -- node[lbl, above, sloped] {$W^{(1)}_{11}$} (z1);
+  \draw [hot] (z1) -- node[lbl, above] {$\sigma$} (a1);
+  \draw [hot] (a1) -- node[lbl, above, sloped] {$w^{(2)}_{1}$} (yh);
+  \draw [hot] (yh) -- (L);
+  \node [font=\footnotesize, color=black!70] at (11.0,-0.8) {$y$};
+  \draw [-Stealth, color=gray!60] (11.0,-0.6) -- (L);
+
+  % operações entre camadas
+  \node [op] at (1.9,2.8) {$W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}$};
+  \node [op] at (4.8,2.8) {$\sigma(\cdot)$};
+  \node [op] at (7.1,2.8) {$\mathbf{w}^{(2)T}\mathbf{a}^{(1)} + b^{(2)}$};
+  \node [op] at (9.8,2.8) {$\frac{1}{2}(\hat{y} - y)^2$};
+
+  % dimensões de cada camada
+  \node [dim] at (0,-2.9)    {$\mathbf{x} \in \mathbb{R}^4$};
+  \node [dim] at (3.8,-2.9)  {$\mathbf{z}^{(1)} \in \mathbb{R}^3$};
+  \node [dim] at (5.8,-2.9)  {$\mathbf{a}^{(1)} \in \mathbb{R}^3$};
+  \node [dim] at (8.5,-2.9)  {$\hat{y} \in \mathbb{R}$};
+  \node [dim] at (11.0,-2.9) {$\mathcal{L} \in \mathbb{R}$};
+\end{tikzpicture}
+```
+:::
+
+## Pausa Ativa 1 — O Desafio da Profundidade
 
 ::: {.callout-tip}
 ## Pergunta Aberta
-Se você estivesse projetando um algoritmo para atualizar os pesos de uma rede neural profunda com 50 camadas, por que tentar derivar uma fórmula fechada explícita para cada peso individual seria inviável, e como a aproximação local contorna esse problema?
-
-*Dica para discussão:* Pense no número de termos algébricos gerados ao expandir a regra do produto e da potência repetidamente versus calcular avaliações numéricas locais passo a passo.
+Por que não podemos simplesmente aplicar o algoritmo de Descida do Gradiente da Aula 8 em um MLP calculando derivadas analíticas individuais para cada um dos parâmetros de forma independente, tratando cada peso como uma função isolada?
 :::
 
 ::: {.callout-tip}
-## Fundamentos de Linearização e Redes
+## Otimização em Modelos Profundos
 Julgue V ou F — a questão só conta se acertar os 4 itens:
 
-- □ A aproximação de Taylor de primeira ordem de uma função não-linear em torno de um ponto $\mathbf{x}_0$ é uma função afim em relação ao vetor de deslocamento $\mathbf{h} = \mathbf{x} - \mathbf{x}_0$.
-- □ Em uma rede neural densa com ativações não-lineares, a perda $\mathcal{L}$ é uma função convexa em relação ao vetor total de parâmetros $\boldsymbol{\theta}$.
-- □ Se uma função $f$ é estritamente não-linear, o erro da sua aproximação linear de Taylor em $\mathbf{x}_0 + \mathbf{h}$ tende a zero mais rápido do que $\|\mathbf{h}\|$ quando $\|\mathbf{h}\| \to 0$.
-- □ O Jacobiano de uma função vetorial $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$ na convenção *denominator layout* possui dimensão $m \times n$.
+- □ Em um MLP com ativações não-lineares, a superfície de perda em relação aos parâmetros é em geral estritamente convexa, herdando as garantias de mínimo global da Aula 7.
+- □ A inclusão de ativações não-lineares é indispensável: compor múltiplas camadas puramente afins $W^{(2)}(W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}) + \mathbf{b}^{(2)}$ equivale estritamente a um único modelo afim $\tilde{W}\mathbf{x} + \tilde{\mathbf{b}}$.
+- □ O gradiente da perda em relação a um peso de uma camada interna independe dos pesos das camadas posteriores, dependendo exclusivamente dos dados de entrada.
+- □ O gradiente descendente pode ser aplicado a superfícies não-convexas, mas a convergência passa a ser garantida apenas para pontos críticos (onde $\nabla \mathcal{L} = \mathbf{0}$), sem garantia de mínimo global.
 :::
 
 ::: {.content-visible when-format="revealjs"}
 ## Pausa Ativa 1 — Resposta
 
 ::: {.callout-tip}
-## Fundamentos de Linearização e Redes — Resposta
-- ✔ **V:** O modelo de 1ª ordem é $T_1(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h}$, que é linear em $\mathbf{h}$ e afim em $\mathbf{x}$.
-- ✗ **F:** O aninhamento de ativações não-lineares quebra a convexidade global; a perda em redes neurais é intrinsecamente não-convexa, repleta de selas e mínimos locais.
-- ✔ **V:** Pela definição de diferenciabilidade, o resto satisfaz $\lim_{\|\mathbf{h}\| \to 0} \frac{|R_1(\mathbf{h})|}{\|\mathbf{h}\|} = 0$, ou seja, $R_1(\mathbf{h}) = o(\|\mathbf{h}\|)$.
-- ✗ **F:** No *denominator layout*, a derivada de $\mathbf{f} \in \mathbb{R}^m$ por $\mathbf{x} \in \mathbb{R}^n$ possui dimensão $n \times m$ (colunas são os gradientes das componentes).
+## Otimização em Modelos Profundos — Resposta
+- ✗ **Falso:** A composição de não-linearidades e produtos de pesos destrói a convexidade; a perda de redes neurais possui múltiplos mínimos locais e pontos de sela.
+- ✔ **Verdadeiro:** O produto de matrizes é fechado sob multiplicação: $W^{(2)}W^{(1)} = \tilde{W}$. Sem não-linearidades, profundidade não agrega expressividade.
+- ✗ **Falso:** Pela regra da cadeia, o sinal de erro deve atravessar as camadas posteriores para alcançar os pesos anteriores.
+- ✔ **Verdadeiro:** O Lema da Descida garante que passos adequados diminuem o custo até um ponto estacionário $\nabla \mathcal{L} = \mathbf{0}$.
 :::
 
 ::: {.fragment}
-**Voltando à pergunta:** Expandir formalmente expressões analíticas através de dezenas de camadas provoca uma explosão combinatória de termos simbólicos (*expression swell*). A aproximação local de Taylor combinada à regra da cadeia modular decompõe a tarefa colossal em avaliações numéricas lineares locais camada a camada, reutilizando cálculos intermediários.
+**Voltando à pergunta:** Tratar cada peso isoladamente geraria uma redundância computacional catastrófica: recalcularíamos as ativações e sensibilidades da rede inteira $d$ vezes. A regra da cadeia explora o compartilhamento de cálculos intermediários.
 :::
 :::
 
-# Intuição — O Espelho Tangente e a Tigela Osculadora
+# Intuição — A Correnteza e o Eco
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-Imagine caminhar sobre a superfície curva da Terra. Embora a Terra seja uma esfera com raio de aproximadamente $6.371\text{ km}$, a planura aparente do solo ao nosso redor é tão convincente que a humanidade levou milênios para deduzir sua curvatura global. Essa experiência cotidiana ilustra o princípio físico da **diferenciabilidade**:
+Imagine um sistema fluvial complexo. A água das nascentes (os dados de entrada $\mathbf{x}$ e os parâmetros $W, \mathbf{b}$) desce corredeiras e represas (somas ponderadas e ativações não-lineares), unindo-se gradativamente até desaguar em uma única lagoa na foz (a função de perda escalar $\mathcal{L}$). Esse fluxo direto é a **Passagem Direta (*Forward Pass*)**.
 
-> Toda variedade suave, quando observada através de um microscópio centrado em um ponto de operação, parece indistinguível de um espaço plano.
+Quando lançamos uma pedra na lagoa, a perturbação no nível da água gera uma onda acústica que viaja de volta rio acima, ecoando por todos os canais e afluentes até atingir cada nascente individual. Esse retorno do sinal de erro é a **Passagem Reversa (*Backward Pass*)**.
 
-No cálculo multivariado, o Teorema de Taylor é a formalização rigorosa desse fenômeno através de duas lentes de aproximação:
-1. **O Espelho Tangente (1ª Ordem):** Posicionamos um espelho plano perfeitamente tangente à superfície no ponto $\mathbf{x}_0$. Se nos movermos por uma distância infinitesimal $\mathbf{h}$, a elevação percorrida no espelho acompanha fielmente a superfície verdadeira. A inclinação desse espelho é dada pelo vetor gradiente $\nabla f(\mathbf{x}_0)$.
-2. **A Tigela Osculadora (2ª Ordem):** Se nos afastarmos um pouco mais, a superfície começa a se curvar para longe do espelho plano. Para acompanhar essa dobra, curvamos o espelho em uma concha parabólica que possui exatamente a mesma curvatura direcional da função em todas as direções. Essa tigela osculadora é governada pela matriz Hessiana $\nabla^2 f(\mathbf{x}_0)$.
-
-Entretanto, há uma restrição intransponível: **o raio de validade local**. Por melhor que seja a parábola, se nos deslocarmos para muito longe de $\mathbf{x}_0$, montanhas e precipícios imprevisíveis surgirão. Todo método de otimização de primeira ordem baseia suas decisões na premissa de que o passo $\mathbf{h}$ permanecerá confinado dentro da região onde o espelho tangente não mente.
+O ponto pedagógico central é a **modularidade atômica**: nenhuma gota d'água no meio do rio precisa conhecer a geografia inteira da bacia hidrográfica; cada represa só precisa saber como transmitir o fluxo para frente e como retransmitir o eco que chega da jusante para seus afluentes imediatos a montante.
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## Intuição: A Planura Local da Superfície
-
-::: {.callout-note}
-## Por Que Aproximar Localmente?
-- **A Terra Plana Local:** Olhando para os próprios pés, a Terra parece plana. Em uma vizinhança microscópica, qualquer função diferenciável é linear.
-- **O Espelho Tangente (1ª Ordem):** $f(\mathbf{x}_0 + \mathbf{h}) \approx f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h}$. O gradiente dita a inclinação do chão.
-- **A Tigela Osculadora (2ª Ordem):** $f(\mathbf{x}_0 + \mathbf{h}) \approx f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2}\mathbf{h}^T H \mathbf{h}$. A Hessiana dita como o chão se dobra.
-:::
+## A Correnteza e o Eco
 
 ::: {.fragment}
-- **O Raio de Validade:** A aproximação só é fiel dentro de uma bolha de confiança $\|\mathbf{h}\| \le \epsilon$.
-- Se o passo do algoritmo for tímido demais, o progresso é lento; se for agressivo demais, o modelo local colapsa e o algoritmo pode divergir.
+- **A Correnteza (Forward Pass):** Os dados e pesos fluem das entradas até a perda escalar, aplicando operações atômicas sucessivas.
+:::
+::: {.fragment}
+- **O Eco (Backward Pass):** A perda gera um sinal de sensibilidade ($\frac{\partial \mathcal{L}}{\partial \mathcal{L}} = 1$) que viaja rio acima pelo mesmo caminho, retropropagando derivadas parciais.
+:::
+::: {.fragment}
+- **Modularidade Local:** Cada nó do grafo só precisa conhecer:
+  1. O valor de suas entradas locais;
+  2. Como calcular sua própria derivada local;
+  3. Como multiplicar a derivada local pelo gradiente que vem de cima.
 :::
 :::
 
-# Bloco 1: O Teorema de Taylor Multivariado e Restos de Aproximação
+# Bloco 1: Redes Neurais e a Reutilização de Computações
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## Teorema de Taylor Multivariado Formal
+## Recordando: Regras da Soma e da Cadeia (Escalar e Vetorial)
 
-Seja $f: \Omega \subseteq \mathbb{R}^d \to \mathbb{R}$ uma função duas vezes continuamente diferenciável ($f \in C^2$) no conjunto aberto convexo $\Omega$. Desejamos expressar o valor de $f(\mathbf{x}_0 + \mathbf{h})$ a partir das informações locais concentradas exclusivamente em $\mathbf{x}_0$.
+Antes de derivarmos redes neurais profundas, convém recapitular os dois pilares operacionais do cálculo diferencial da Aula 6:
 
-Definamos a função auxiliar unidimensional $\phi: [0, 1] \to \mathbb{R}$ dada por:
-$$\phi(t) = f(\mathbf{x}_0 + t\mathbf{h})$$
-A função $\phi(t)$ avalia a função $f$ ao longo do segmento reto que conecta $\mathbf{x}_0$ a $\mathbf{x}_0 + \mathbf{h}$. Aplicando a regra da cadeia univariada para as derivadas sucessivas de $\phi$:
-$$\phi'(t) = \nabla f(\mathbf{x}_0 + t\mathbf{h})^T \mathbf{h} = \sum_{i=1}^d \frac{\partial f}{\partial x_i}(\mathbf{x}_0 + t\mathbf{h}) h_i$$
-$$\phi''(t) = \mathbf{h}^T \nabla^2 f(\mathbf{x}_0 + t\mathbf{h})\, \mathbf{h} = \sum_{i=1}^d \sum_{j=1}^d \frac{\partial^2 f}{\partial x_i \partial x_j}(\mathbf{x}_0 + t\mathbf{h}) h_i h_j$$
+### 1. Regra da Soma (Linearidade do Operador Diferencial)
+A diferenciação distribui-se aditivamente:
+- **Escalar Univariada:** Se $f(x) = u(x) + v(x)$, então:
+  $$\frac{df}{dx} = \frac{du}{dx} + \frac{dv}{dx}$$
+- **Multivariada / Gradiente Vetorial:** Se $f(\mathbf{x}) = u(\mathbf{x}) + v(\mathbf{x})$ para $\mathbf{x} \in \mathbb{R}^n$, o vetor gradiente satisfaz:
+  $$\nabla_{\mathbf{x}} (u + v) = \nabla_{\mathbf{x}} u + \nabla_{\mathbf{x}} v$$
+- **Campos Vetoriais (Jacobianas):** Se $\mathbf{f}(\mathbf{x}) = \mathbf{u}(\mathbf{x}) + \mathbf{v}(\mathbf{x}) \in \mathbb{R}^m$, a matriz Jacobiana é a soma das Jacobianas:
+  $$J_{\mathbf{u} + \mathbf{v}}(\mathbf{x}) = J_{\mathbf{u}}(\mathbf{x}) + J_{\mathbf{v}}(\mathbf{x})$$
 
-Pelo Teorema Fundamental do Cálculo, podemos escrever:
-$$\phi(1) = \phi(0) + \int_0^1 \phi'(t)\, dt$$
-Substituindo $\phi'(t)$ pela expansão de Taylor de $\phi'(t)$ em torno de $t=0$, deduzimos as aproximações multivariadas fundamentais.
+### 2. Regra da Cadeia (Composição de Funções)
+- **Escalar Univariada:** Se $y = g(u)$ e $u = f(x)$, a taxa de variação é o produto direto das derivadas locais:
+  $$\frac{dy}{dx} = \frac{dy}{du} \frac{du}{dx}$$
+- **Escalar Multivariada com Múltiplos Canais (Soma de Caminhos):** Se $y = g(u_1, \dots, u_m)$ e cada $u_j = f_j(x)$, a perturbação em $x$ propaga-se por todos os canais intermediários:
+  $$\frac{dy}{dx} = \sum_{j=1}^m \frac{\partial y}{\partial u_j} \frac{du_j}{dx}$$
+- **Vetorial com Saída Escalar (*Denominator Layout*):** Se $\mathbf{u} = \mathbf{f}(\mathbf{x}) \in \mathbb{R}^m$ e $y = g(\mathbf{u}) \in \mathbb{R}$ para $\mathbf{x} \in \mathbb{R}^n$:
+  $$\nabla_{\mathbf{x}} (g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g \in \mathbb{R}^{n \times 1}$$
+  onde $J_{\mathbf{f}}(\mathbf{x}) \in \mathbb{R}^{n \times m}$ possui as derivadas nas colunas ($[J_{\mathbf{f}}]_{ij} = \frac{\partial f_j}{\partial x_i}$) e $\nabla_{\mathbf{u}} g \in \mathbb{R}^{m \times 1}$ é o gradiente da função externa.
+- **Composição Geral entre Campos Vetoriais:** Se $\mathbf{y} = \mathbf{g}(\mathbf{f}(\mathbf{x})) \in \mathbb{R}^p$, a matriz Jacobiana total é o produto matricial encadeado:
+  $$J_{\mathbf{g} \circ \mathbf{f}}(\mathbf{x}) = J_{\mathbf{f}}(\mathbf{x})\, J_{\mathbf{g}}(\mathbf{u}) \in \mathbb{R}^{n \times p}$$
 
 ::: {.callout-note icon=false}
-## Definição (Polinômios de Taylor Multivariados — MathML, Def. 5.7 e 5.8, pp. 166–167)
-
-Para $f: \mathbb{R}^d \to \mathbb{R}$ suficientemente suave em $\mathbf{x}_0$, definem-se:
-
-1. **Polinômio de Taylor de Grau 1 (Aproximação Linear / Hiperplano Tangente):**
-   $$T_1(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h}$$
-
-2. **Polinômio de Taylor de Grau 2 (Aproximação Quadrática / Paraboloide Osculador):**
-   $$T_2(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2} \mathbf{h}^T \nabla^2 f(\mathbf{x}_0)\, \mathbf{h}$$
+## A Arquitetura das Redes Neurais sob Essa Ótica
+Em cada neurônio de uma rede neural, executamos uma **combinação linear ponderada** (regra da soma); em seguida, conectamos as camadas em sequência sucessiva (regra da cadeia). O **Backpropagation** nada mais é do que o uso simultâneo e recursivo dessas duas regras fundamentais!
+:::
 :::
 
-### O Resto de Lagrange e Cotas de Erro Rigorosas
+::: {.content-visible when-format="revealjs"}
+## Recordando: Regras da Soma e da Cadeia
 
-A função exata difere de suas aproximações polinomiais por um termo de resto:
-$$f(\mathbf{x}_0 + \mathbf{h}) = T_1(\mathbf{x}_0 + \mathbf{h}) + R_1(\mathbf{h}) = T_2(\mathbf{x}_0 + \mathbf{h}) + R_2(\mathbf{h})$$
+::: {.columns}
+::: {.column width="50%"}
+### Regra da Soma (Linearidade)
+- **Escalar:**
+  $$(u + v)' = u' + v'$$
+- **Gradiente Vetorial:**
+  $$\nabla_{\mathbf{x}} (u + v) = \nabla_{\mathbf{x}} u + \nabla_{\mathbf{x}} v$$
+- **Campos Vetoriais (Jacobianas):**
+  $$J_{\mathbf{u} + \mathbf{v}} = J_{\mathbf{u}} + J_{\mathbf{v}}$$
+:::
 
-Pelo **Teorema do Valor Médio de Lagrange**, existe algum ponto intermediário $\boldsymbol{\xi}_1 = \mathbf{x}_0 + \tau_1 \mathbf{h}$ (com $\tau_1 \in (0, 1)$) tal que:
-$$R_1(\mathbf{h}) = \frac{1}{2} \mathbf{h}^T \nabla^2 f(\boldsymbol{\xi}_1)\, \mathbf{h}$$
+::: {.column width="50%"}
+### Regra da Cadeia (Composição)
+- **Escalar Univariada:**
+  $$\frac{dy}{dx} = \frac{dy}{du} \frac{du}{dx}$$
+- **Multivariada (Múltiplos Canais):**
+  $$\frac{dy}{dx} = \sum_{j=1}^m \frac{\partial y}{\partial u_j} \frac{\partial u_j}{\partial x}$$
+- **Vetorial (*Denominator Layout*):**
+  $$\nabla_{\mathbf{x}} (g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$$
+:::
+:::
 
-Analogamente, se $f \in C^3$, existe $\boldsymbol{\xi}_2 = \mathbf{x}_0 + \tau_2 \mathbf{h}$ ($\tau_2 \in (0, 1)$) tal que:
-$$R_2(\mathbf{h}) = \frac{1}{6} \sum_{i=1}^d \sum_{j=1}^d \sum_{k=1}^d \frac{\partial^3 f}{\partial x_i \partial x_j \partial x_k}(\boldsymbol{\xi}_2) h_i h_j h_k$$
+::: {.fragment .callout-note icon=false}
+## O Motor do Backpropagation
+Cada neurônio soma termos ponderados (**Regra da Soma**); cada camada compõe a anterior (**Regra da Cadeia**). O treino da rede orquestra ambas recursivamente!
+:::
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## Redes Neurais Profundas como Composição de Funções
+
+Em aprendizado profundo, a saída predita $\hat{\mathbf{y}}$ é calculada como uma composição multinível de funções:
+
+$$\hat{\mathbf{y}} = (f_K \circ f_{K-1} \circ \dots \circ f_1)(\mathbf{x}) = f_K\big(f_{K-1}(\dots(f_1(\mathbf{x}))\dots)\big)$$
+
+onde $\mathbf{x}$ denota as entradas (ex: atributos do California Housing), $\hat{\mathbf{y}}$ denota as predições, e cada camada $f_i$ possui seu próprio conjunto de parâmetros $\boldsymbol{\theta}_i = \{A_{i-1}, \mathbf{b}_{i-1}\}$:
+
+$$f_i(\mathbf{x}_{i-1}) = \sigma(A_{i-1} \mathbf{x}_{i-1} + \mathbf{b}_{i-1})$$
+
+com $\mathbf{x}_0 := \mathbf{x}$ e $\sigma$ uma função de ativação não-linear (sigmoide, tanh, ReLU). O objetivo do treinamento consiste em encontrar os parâmetros $\boldsymbol{\theta} = \{A_0, \mathbf{b}_0, \dots, A_{K-1}, \mathbf{b}_{K-1}\}$ que minimizam uma perda empírica, por exemplo, a perda quadrática $\mathcal{L}(\boldsymbol{\theta}) = \frac{1}{2}\|\mathbf{y} - f_K(\boldsymbol{\theta}, \mathbf{x})\|^2$.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Composição em Múltiplas Camadas
+
+- **Composição Multinível:**
+  $$\hat{\mathbf{y}} = (f_K \circ f_{K-1} \circ \dots \circ f_1)(\mathbf{x}) = f_K\big(f_{K-1}(\dots(f_1(\mathbf{x}))\dots)\big)$$
+- **A Estrutura de Cada Camada:**
+  $$f_i(\mathbf{x}_{i-1}) = \sigma(A_{i-1}\mathbf{x}_{i-1} + \mathbf{b}_{i-1})$$
+- **O Objetivo:** Encontrar parâmetros $\boldsymbol{\theta} = \{A_0, \mathbf{b}_0, \dots, A_{K-1}, \mathbf{b}_{K-1}\}$ que minimizam:
+  $$\mathcal{L}(\boldsymbol{\theta}) = \frac{1}{2}\|\mathbf{y} - f_K(\boldsymbol{\theta}, \mathbf{x})\|^2$$
+:::
+
+::: {.fig-resize style="width: 85%; margin: 0 auto;"}
+```{.tikz}
+\definecolor{icblue}{HTML}{0085CA}
+\definecolor{icorange}{HTML}{FF5E00}
+\definecolor{icred}{HTML}{E03C31}
+\begin{tikzpicture}[
+  layer/.style={circle, draw=icblue, fill=icblue!10, thick, minimum size=0.9cm, font=\small\bfseries},
+  param/.style={rectangle, draw=black!70, fill=white, rounded corners=2pt, minimum width=0.55cm, minimum height=1.3cm, font=\footnotesize},
+  loss/.style={circle, draw=icred, fill=icred!12, thick, minimum size=0.9cm, font=\small\bfseries},
+  edge/.style={-Stealth, thick, color=black!70},
+  back/.style={-Stealth, very thick, color=icorange, dashed}
+]
+  \node[circle, draw=black!60, inner sep=2pt, font=\small] (x) at (0,0) {$\mathbf{x}$};
+  \node[param] (box0) at (1.6,0) {};
+  \node[font=\tiny] at (1.6,-1.0) {$A_0, \mathbf{b}_0$};
+  \node[layer] (f1) at (3.2,0) {$f_1$};
+  \node[param] (box1) at (4.8,0) {};
+  \node[font=\tiny] at (4.8,-1.0) {$A_1, \mathbf{b}_1$};
+  \node[font=\small] (dots) at (6.1,0) {$\cdots$};
+  \node[param] (boxkm1) at (7.4,0) {};
+  \node[font=\tiny] at (7.4,-1.0) {$A_{K-2}, \mathbf{b}_{K-2}$};
+  \node[layer] (fkm1) at (9.0,0) {$f_{K-1}$};
+  \node[param] (boxk) at (10.6,0) {};
+  \node[font=\tiny] at (10.6,-1.0) {$A_{K-1}, \mathbf{b}_{K-1}$};
+  \node[layer] (fk) at (12.2,0) {$f_K$};
+  \node[loss] (L) at (13.8,0) {$\mathcal{L}$};
+
+  \draw[edge] (x) -- (box0);
+  \draw[edge] (box0) -- (f1);
+  \draw[edge] (f1) -- (box1);
+  \draw[edge] (box1) -- (dots);
+  \draw[edge] (dots) -- (boxkm1);
+  \draw[edge] (boxkm1) -- (fkm1);
+  \draw[edge] (fkm1) -- (boxk);
+  \draw[edge] (boxk) -- (fk);
+  \draw[edge] (fk) -- (L);
+
+  % Backpropagation arrow showing reuse
+  \draw[back] (L) to[bend right=45] node[above, font=\scriptsize, color=icorange] {Reuso de prefixos: $\frac{\partial \mathcal{L}}{\partial f_{i+1}}$} (boxk);
+  \draw[back] (boxk) to[bend right=45] (fkm1);
+\end{tikzpicture}
+```
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## A Obtenção dos Gradientes pela Regra da Cadeia
+
+Para atualizar os parâmetros por Descida do Gradiente, precisamos das derivadas parciais da perda $\mathcal{L}$ em relação aos parâmetros $\boldsymbol{\theta}_j = \{A_j, \mathbf{b}_j\}$ de cada camada $j = 0, \dots, K-1$.
+
+A regra da cadeia multivariada nos permite expressar essas derivadas como uma cascata de multiplicações:
+
+$$\begin{aligned}
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{K-1}} &= \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial \boldsymbol{\theta}_{K-1}} \\
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{K-2}} &= \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial f_{K-1}} \frac{\partial f_{K-1}}{\partial \boldsymbol{\theta}_{K-2}} \\
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{K-3}} &= \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial f_{K-1}} \frac{\partial f_{K-1}}{\partial f_{K-2}} \frac{\partial f_{K-2}}{\partial \boldsymbol{\theta}_{K-3}} \\
+&\;\;\vdots \\
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_i} &= \left( \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial f_{K-1}} \dots \frac{\partial f_{i+2}}{\partial f_{i+1}} \right) \frac{\partial f_{i+1}}{\partial \boldsymbol{\theta}_i}
+\end{aligned}$$
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Obtenção dos Gradientes em Cadeia
+
+$$\begin{aligned}
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{K-1}} &= \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial \boldsymbol{\theta}_{K-1}} \\
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{K-2}} &= \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial f_{K-1}} \frac{\partial f_{K-1}}{\partial \boldsymbol{\theta}_{K-2}} \\
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{K-3}} &= \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial f_{K-1}} \frac{\partial f_{K-1}}{\partial f_{K-2}} \frac{\partial f_{K-2}}{\partial \boldsymbol{\theta}_{K-3}} \\
+&\;\;\vdots \\
+\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_i} &= \underbrace{\left( \frac{\partial \mathcal{L}}{\partial f_K} \frac{\partial f_K}{\partial f_{K-1}} \dots \frac{\partial f_{i+2}}{\partial f_{i+1}} \right)}_{\text{Prefixo já computado para a camada } i+1} \frac{\partial f_{i+1}}{\partial \boldsymbol{\theta}_i}
+\end{aligned}$$
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## Reutilização de Computações: O Coração do Backpropagation
+
+O segredo que torna o treinamento de redes neurais tratável reside na seguinte observação:
+
+::: {.callout-note icon=false}
+## Teorema Prático (Reutilização de Computações)
+Se já calculamos a sensibilidade da camada superior $\frac{\partial \mathcal{L}}{\partial f_{i+1}}$, a maior parte da computação pode ser **integralmente reutilizada** para obter $\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_i}$.
+:::
+
+Para obter $\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_i}$, basta:
+1. Multiplicar o sinal acumulado $\frac{\partial \mathcal{L}}{\partial f_{i+1}}$ pela derivada de transição entre camadas $\frac{\partial f_{i+1}}{\partial f_i}$;
+2. Multiplicar pela derivada local da camada com relação aos seus próprios parâmetros $\frac{\partial f_i}{\partial \boldsymbol{\theta}_i}$.
+
+Essa estrutura recursiva é precisamente o algoritmo de **Backpropagation**: o sinal de erro é propagado de trás para frente, de modo que cada camada calcula seu gradiente local aproveitando o eco acumulado das camadas anteriores.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Reutilização de Computações
 
 ::: {.callout-important}
-## Teorema (Cotas de Erro Assintóticas e Suavidade — Boyd & Vandenberghe, App. A.4)
-
-Se o gradiente de $f$ é $L$-Lipschitziano ($\|\nabla f(\mathbf{x}) - \nabla f(\mathbf{y})\| \le L\|\mathbf{x} - \mathbf{y}\|$), então:
-$$|R_1(\mathbf{h})| = |f(\mathbf{x}_0 + \mathbf{h}) - T_1(\mathbf{x}_0 + \mathbf{h})| \le \frac{L}{2} \|\mathbf{h}\|_2^2$$
-
-Se a Hessiana de $f$ é $M$-Lipschitziana ($\|\nabla^2 f(\mathbf{x}) - \nabla^2 f(\mathbf{y})\|_2 \le M\|\mathbf{x} - \mathbf{y}\|_2$), então:
-$$|R_2(\mathbf{h})| = |f(\mathbf{x}_0 + \mathbf{h}) - T_2(\mathbf{x}_0 + \mathbf{h})| \le \frac{M}{6} \|\mathbf{h}\|_2^3$$
-:::
-
-Essas desigualdades revelam a disparidade na taxa de perda de precisão: quando reduzimos o passo $\|\mathbf{h}\|$ pela metade, o erro da aproximação linear cai por um fator de $4$ ($\frac{1}{4}$), enquanto o erro da aproximação quadrática cai por um fator de $8$ ($\frac{1}{8}$)!
-:::
-
-::: {.content-visible when-format="revealjs"}
-## Teorema de Taylor Multivariado: 1ª e 2ª Ordens
-
-::: {.callout-note icon=false}
-## Polinômios de Taylor em Torno de $\mathbf{x}_0$ (MathML, §5.8)
-Seja $\mathbf{h} = \mathbf{x} - \mathbf{x}_0$.
-
-- **Grau 1 (Linear / Hiperplano Tangente):**
-  $$T_1(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h}$$
-
-- **Grau 2 (Quadrático / Paraboloide Osculador):**
-  $$T_2(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2}\mathbf{h}^T \nabla^2 f(\mathbf{x}_0)\mathbf{h}$$
-:::
-
-::: {.fragment}
-## Cotas de Erro Rigorosas (Boyd, App. A.4)
-- **Resto Linear:** $|f(\mathbf{x}_0 + \mathbf{h}) - T_1(\mathbf{x}_0 + \mathbf{h})| \le \frac{L}{2} \|\mathbf{h}\|_2^2 \implies R_1(\mathbf{h}) = \mathcal{O}(\|\mathbf{h}\|^2)$.
-- **Resto Quadrático:** $|f(\mathbf{x}_0 + \mathbf{h}) - T_2(\mathbf{x}_0 + \mathbf{h})| \le \frac{M}{6} \|\mathbf{h}\|_2^3 \implies R_2(\mathbf{h}) = \mathcal{O}(\|\mathbf{h}\|^3)$.
+## Pontos-Chave do Backpropagation
+- **Reaproveitamento:** Se já calculamos $\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_{i+1}}$, a maior parte da computação pode ser reutilizada para calcular $\frac{\partial \mathcal{L}}{\partial \boldsymbol{\theta}_i}$.
+- **Custo Amortizado:** Não recalculamos a cadeia desde a foz $\mathcal{L}$ para cada parâmetro; acumulamos o sinal de trás para frente em um único passe linear.
+- **Termos Adicionais:** A cada camada retrocedida, apenas multiplicamos pelo Jacobiano de transição local.
 :::
 :::
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## A Ponte Conceitual: Gradient Descent é Minimização de Taylor com Região de Confiança
+## Formalização Matricial com Jacobianos e Sensibilidades
 
-Existe uma pergunta crucial que raramente é respondida nos cursos introdutórios: **por que a Descida do Gradiente dá passos proporcionais a $-\nabla f$?**
+Traduzindo essa mecânica para a notação matricial do curso com gradientes-coluna e *denominator layout*:
+- Se $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$, a matriz Jacobiana é $J_{\mathbf{f}}(\mathbf{x}) \in \mathbb{R}^{n \times m}$ com colunas $\nabla_{\mathbf{x}} f_j$.
+- Para a composição $g(\mathbf{f}(\mathbf{x}))$, temos a regra da cadeia:
+  $$\nabla_{\mathbf{x}} (g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$$
 
-A resposta analítica mais profunda decorre diretamente da Série de Taylor. Suponha que desejamos minimizar a aproximação linear de Taylor $T_1(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h}$. Se tentarmos minimizar $T_1$ diretamente sem restrições, o problema é ilimitado inferiormente: bastaria escolher $\mathbf{h}$ na direção oposta ao gradiente com $\|\mathbf{h}\| \to \infty$ para obter $T_1 \to -\infty$. Mas sabemos que $T_1$ só é fiel em uma vizinhança de $\mathbf{x}_0$!
+Definindo o **vetor de sensibilidade pré-sináptica** $\boldsymbol{\delta}^{(l)} := \nabla_{\mathbf{z}^{(l)}} \mathcal{L} \in \mathbb{R}^{d_l}$ para cada camada $l$, obtemos as **3 equações canônicas do backpropagation**:
 
-Portanto, devemos penalizar passos grandes adicionando um termo quadrático de regularização proximal $\frac{1}{2\alpha}\|\mathbf{h}\|_2^2$, que funciona como uma **região de confiança suave**:
+### 1. Sensibilidade da Camada de Saída ($L$)
 
-::: {.callout-note icon=false}
-## Teorema (Otimização Proximal da Aproximação Linear)
+Na camada final $L$, a perda $\mathcal{L}$ depende diretamente das ativações pós-sinápticas $\mathbf{a}^{(L)} = \sigma(\mathbf{z}^{(L)})$. Aplicando a regra da cadeia escalar para cada componente $j = 1, \dots, d_L$:
+$$\frac{\partial \mathcal{L}}{\partial z_j^{(L)}} = \frac{\partial \mathcal{L}}{\partial a_j^{(L)}} \frac{\partial a_j^{(L)}}{\partial z_j^{(L)}} = \frac{\partial \mathcal{L}}{\partial a_j^{(L)}} \, \sigma'(z_j^{(L)})$$
+Em notação vetorial, agrupando pelo produto elemento a elemento (Hadamard $\odot$):
+$$\boldsymbol{\delta}^{(L)} := \nabla_{\mathbf{z}^{(L)}} \mathcal{L} = \nabla_{\mathbf{a}^{(L)}}\mathcal{L} \odot \sigma'(\mathbf{z}^{(L)}) \in \mathbb{R}^{d_L}$$
+Para a função de perda quadrática $\mathcal{L} = \frac{1}{2}\|\mathbf{a}^{(L)} - \mathbf{y}\|^2$, temos $\nabla_{\mathbf{a}^{(L)}}\mathcal{L} = \mathbf{a}^{(L)} - \mathbf{y}$ (o vetor de resíduos preditivos diretos), de modo que $\boldsymbol{\delta}^{(L)} = (\mathbf{a}^{(L)} - \mathbf{y}) \odot \sigma'(\mathbf{z}^{(L)})$.
 
-Seja o problema de otimização local:
-$$\mathbf{h}^\star = \arg\min_{\mathbf{h} \in \mathbb{R}^d} \left\{ f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2\alpha} \|\mathbf{h}\|_2^2 \right\}$$
-onde $\alpha > 0$. A solução analítica única desse problema é exatamente o passo da Descida do Gradiente:
-$$\mathbf{h}^\star = -\alpha \nabla f(\mathbf{x}_0) \iff \mathbf{x}_{k+1} = \mathbf{x}_0 - \alpha \nabla f(\mathbf{x}_0)$$
-:::
+### 2. Propagação Retrógrada da Sensibilidade ($l \to l-1$)
 
-**Demonstração Formal:**
-Defina a função objetivo quadrática estritamente convexa em $\mathbf{h}$:
-$$M(\mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2\alpha} \mathbf{h}^T \mathbf{h}$$
-Calculando o gradiente de $M(\mathbf{h})$ em relação ao vetor $\mathbf{h}$:
-$$\nabla_{\mathbf{h}} M(\mathbf{h}) = \nabla f(\mathbf{x}_0) + \frac{1}{\alpha} \mathbf{h}$$
-Como a Hessiana em relação a $\mathbf{h}$ é $\nabla_{\mathbf{h}}^2 M(\mathbf{h}) = \frac{1}{\alpha} I \succ 0$, a função $M(\mathbf{h})$ é estritamente convexa e seu ponto crítico é o único minimizador global:
-$$\nabla_{\mathbf{h}} M(\mathbf{h}) = \mathbf{0} \implies \nabla f(\mathbf{x}_0) + \frac{1}{\alpha} \mathbf{h} = \mathbf{0} \implies \mathbf{h}^\star = -\alpha \nabla f(\mathbf{x}_0) \quad \blacksquare$$
+Para qualquer camada oculta $l < L$, as ativações $\mathbf{a}^{(l)}$ afetam a perda unicamente através das pré-ativações da camada seguinte $\mathbf{z}^{(l+1)} = W^{(l+1)}\mathbf{a}^{(l)} + \mathbf{b}^{(l+1)}$. Pela regra da cadeia multivariada, somamos as contribuições de todas as unidades receptoras $k = 1, \dots, d_{l+1}$:
+$$\frac{\partial \mathcal{L}}{\partial a_j^{(l)}} = \sum_{k=1}^{d_{l+1}} \frac{\partial \mathcal{L}}{\partial z_k^{(l+1)}} \frac{\partial z_k^{(l+1)}}{\partial a_j^{(l)}} = \sum_{k=1}^{d_{l+1}} \delta_k^{(l+1)} W_{kj}^{(l+1)} = \left((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}\right)_j$$
+Isso estabelece que o gradiente em relação à ativação pós-sináptica é $\nabla_{\mathbf{a}^{(l)}}\mathcal{L} = (W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}$. Retrocedendo em seguida através da função de ativação pontual $\mathbf{a}^{(l)} = \sigma(\mathbf{z}^{(l)})$, obtemos a sensibilidade pré-sináptica da camada $l$:
+$$\boldsymbol{\delta}^{(l)} := \nabla_{\mathbf{z}^{(l)}}\mathcal{L} = \nabla_{\mathbf{a}^{(l)}}\mathcal{L} \odot \sigma'(\mathbf{z}^{(l)}) = \left( (W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)} \right) \odot \sigma'(\mathbf{z}^{(l)}) \in \mathbb{R}^{d_l}$$
+A matriz transposta $(W^{(l+1)})^T \in \mathbb{R}^{d_l \times d_{l+1}}$ funciona aqui como o **operador adjunto linear** que mapeia o vetor de sinal de erro da dimensão $d_{l+1}$ de volta para a dimensão $d_l$.
 
-Essa equivalência estabelece um dos elos mais elegantes da matemática do aprendizado de máquina: **a taxa de aprendizado $\alpha$ é o inverso do coeficiente de penalidade de afastamento da aproximação linear de Taylor**. Quando $\alpha$ é pequeno, desconfiamos do modelo linear para passos longos; quando $\alpha$ é grande, assumimos que o hiperplano tangente permanece fiel por distâncias maiores.
+### 3. Gradientes dos Parâmetros ($W^{(l)}$ e $\mathbf{b}^{(l)}$)
+
+Com as sensibilidades $\boldsymbol{\delta}^{(l)}$ em mãos, o cálculo das derivadas em relação aos parâmetros a serem atualizados pelo otimizador é imediato. Como $z_j^{(l)} = \sum_{k=1}^{d_{l-1}} W_{jk}^{(l)} a_k^{(l-1)} + b_j^{(l)}$, vemos que o peso $W_{jk}^{(l)}$ afeta unicamente a $j$-ésima componente $z_j^{(l)}$:
+$$\frac{\partial \mathcal{L}}{\partial W_{jk}^{(l)}} = \frac{\partial \mathcal{L}}{\partial z_j^{(l)}} \frac{\partial z_j^{(l)}}{\partial W_{jk}^{(l)}} = \delta_j^{(l)} \, a_k^{(l-1)}$$
+Agrupando todos os elementos $(j, k)$ em uma matriz, obtemos elegantemente um **produto diádico** (produto externo de matrizes de posto 1):
+$$\nabla_{W^{(l)}} \mathcal{L} = \boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T \in \mathbb{R}^{d_l \times d_{l-1}}$$
+Para o vetor de vieses $\mathbf{b}^{(l)}$, como $\frac{\partial z_j^{(l)}}{\partial b_j^{(l)}} = 1$, temos:
+$$\nabla_{\mathbf{b}^{(l)}} \mathcal{L} = \boldsymbol{\delta}^{(l)} \in \mathbb{R}^{d_l}$$
+Com isso, a atualização pela Descida do Gradiente ($\eta > 0$) para a camada $l$ é:
+$$W^{(l)} \leftarrow W^{(l)} - \eta \, \boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T, \quad \mathbf{b}^{(l)} \leftarrow \mathbf{b}^{(l)} - \eta \, \boldsymbol{\delta}^{(l)}$$
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## Gradient Descent = Taylor Linear + Penalidade Proximal
+## Backpropagation: Sensibilidade da Saída ($\boldsymbol{\delta}^{(L)}$)
 
 ::: {.callout-note}
-## Por Que Damos Passos Proporcionais a $-\nabla f$?
-Se minimizarmos o modelo linear $T_1(\mathbf{x}_0 + \mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h}$ sob uma penalidade de confiança quadrática $\frac{1}{2\alpha}\|\mathbf{h}\|_2^2$:
-$$\mathbf{h}^\star = \arg\min_{\mathbf{h}} \left[ f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2\alpha} \|\mathbf{h}\|_2^2 \right]$$
+## Sensibilidade Pré-Sináptica
+Definimos o vetor de erro pré-sináptico de cada camada $l$ como o gradiente:
+$$\boldsymbol{\delta}^{(l)} := \nabla_{\mathbf{z}^{(l)}} \mathcal{L} \in \mathbb{R}^{d_l}$$
+:::
+::: {.columns}
+
+::: {.column width="50%"}
+::: {.fragment}
+- **Regra da Cadeia na Saída:** Como $\mathbf{a}^{(L)} = \sigma(\mathbf{z}^{(L)})$,
+  $$\frac{\partial \mathcal{L}}{\partial z_j^{(L)}} = \frac{\partial \mathcal{L}}{\partial a_j^{(L)}} \frac{\partial a_j^{(L)}}{\partial z_j^{(L)}} = \frac{\partial \mathcal{L}}{\partial a_j^{(L)}} \, \sigma'(z_j^{(L)})$$
+:::
+:::
+
+::: {.column width="50%"}
+::: {.fragment}
+- **Gradiente Vetorial com Produto de Hadamard ($\odot$):**
+  $$\boldsymbol{\delta}^{(L)} = \nabla_{\mathbf{z}^{(L)}} \mathcal{L} = \nabla_{\mathbf{a}^{(L)}}\mathcal{L} \odot \sigma'(\mathbf{z}^{(L)}) \in \mathbb{R}^{d_L}$$
+:::
+:::
+
 :::
 
 ::: {.fragment}
-**Derivação Direta:**
-$$\nabla_{\mathbf{h}} \left[ f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2\alpha} \|\mathbf{h}\|_2^2 \right] = \nabla f(\mathbf{x}_0) + \frac{1}{\alpha} \mathbf{h} = \mathbf{0}$$
-$$\implies \mathbf{h}^\star = -\alpha \nabla f(\mathbf{x}_0)$$
+- **Caso da Perda Quadrática $\mathcal{L} = \frac{1}{2}\|\mathbf{a}^{(L)} - \mathbf{y}\|^2$:**
+  $$\nabla_{\mathbf{a}^{(L)}}\mathcal{L} = \mathbf{a}^{(L)} - \mathbf{y} \implies \boldsymbol{\delta}^{(L)} = (\mathbf{a}^{(L)} - \mathbf{y}) \odot \sigma'(\mathbf{z}^{(L)})$$
 :::
 
-::: {.fragment .callout-tip}
-## Conclusão Fundamental
-O *learning rate* $\alpha$ é o raio efetivo da região de confiança da aproximação linear de Taylor!
+## Backpropagation: Propagação Retrógrada ($\boldsymbol{\delta}^{(l)}$)
+
+- **Gradiente em Relação às Ativações $\mathbf{a}^{(l)}$:** Como $\mathbf{z}^{(l+1)} = W^{(l+1)}\mathbf{a}^{(l)} + \mathbf{b}^{(l+1)}$,
+  $$\frac{\partial \mathcal{L}}{\partial a_j^{(l)}} = \sum_{k=1}^{d_{l+1}} \frac{\partial \mathcal{L}}{\partial z_k^{(l+1)}} \frac{\partial z_k^{(l+1)}}{\partial a_j^{(l)}} = \sum_{k=1}^{d_{l+1}} \delta_k^{(l+1)} W_{kj}^{(l+1)} = \left((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}\right)_j$$
+  Logo: $\nabla_{\mathbf{a}^{(l)}}\mathcal{L} = (W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)} \in \mathbb{R}^{d_l}$.
+
+::: {.fragment}
+- **Recuo até a Pré-Ativação $\mathbf{z}^{(l)}$:** Atravessando a ativação $\mathbf{a}^{(l)} = \sigma(\mathbf{z}^{(l)})$:
+  $$\boldsymbol{\delta}^{(l)} := \nabla_{\mathbf{z}^{(l)}}\mathcal{L} = \nabla_{\mathbf{a}^{(l)}}\mathcal{L} \odot \sigma'(\mathbf{z}^{(l)}) = \left( (W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)} \right) \odot \sigma'(\mathbf{z}^{(l)})$$
+:::
+
+::: {.fragment}
+- **O Papel da Transposta $(W^{(l+1)})^T$:**
+  - Operador adjunto linear que projeta o erro de $\mathbb{R}^{d_{l+1}}$ de volta para $\mathbb{R}^{d_l}$.
+  - Se $\sigma'(z_j^{(l)}) \approx 0$ (saturação), o sinal do gradiente é amortecido (*vanishing gradient*).
+:::
+
+## Backprop: Gradientes dos Parâmetros ($W^{(l)}, \mathbf{b}^{(l)}$)
+
+::: {.columns}
+
+::: {.column width="50%"}
+- **Gradiente do Peso Individual $W_{jk}^{(l)}$:** Como $z_j^{(l)} = \sum_k W_{jk}^{(l)} a_k^{(l-1)} + b_j^{(l)}$,
+  $$\frac{\partial \mathcal{L}}{\partial W_{jk}^{(l)}} = \frac{\partial \mathcal{L}}{\partial z_j^{(l)}} \frac{\partial z_j^{(l)}}{\partial W_{jk}^{(l)}} = \delta_j^{(l)} \, a_k^{(l-1)}$$
+
+::: {.fragment}
+- **Gradiente Matricial dos Pesos (Produto Diádico / Posto 1):**
+  $$\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T \in \mathbb{R}^{d_l \times d_{l-1}}$$
+  *Intuição:* Cruza "o erro do neurônio $j$" ($\delta_j^{(l)}$) com "a ativação da entrada $k$" ($a_k^{(l-1)}$).
 :::
 :::
 
-## Pausa Ativa 2: A Geometria de Taylor e o Passo Gradiente
+::: {.column width="50%"}
+::: {.fragment}
+- **Gradiente dos Vieses:** Como $\frac{\partial z_j^{(l)}}{\partial b_j^{(l)}} = 1$,
+  $$\nabla_{\mathbf{b}^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)} \in \mathbb{R}^{d_l}$$
+:::
+
+::: {.fragment}
+- **Regra de Atualização no Gradiente Descendente:**
+  $$W^{(l)} \leftarrow W^{(l)} - \eta \, \nabla_{W^{(l)}}\mathcal{L}, \quad \mathbf{b}^{(l)} \leftarrow \mathbf{b}^{(l)} - \eta \, \nabla_{\mathbf{b}^{(l)}}\mathcal{L}$$
+:::
+:::
+
+:::
+
+## Pausa Ativa 2 — O Mecanismo da Retropropagação
 
 ::: {.callout-tip}
 ## Pergunta Aberta
-Se a aproximação de 2ª ordem $T_2$ inclui a Hessiana e captura a curvatura, por que não minimizamos diretamente $T_2$ a cada iteração em vez de usar a aproximação linear com penalidade $T_1 + \frac{1}{2\alpha}\|\mathbf{h}\|^2$?
-
-*Dica para discussão:* Calcule formalmente $\arg\min_{\mathbf{h}} T_2(\mathbf{x}_0 + \mathbf{h})$ igualando o gradiente a zero. Que operação matricial surge e qual o custo computacional quando temos milhões de parâmetros?
+Por que a propagação da sensibilidade de uma camada para a anterior multiplica a sensibilidade pela matriz transposta $(W^{(l+1)})^T$, e por que o gradiente do peso $W^{(l)}$ tem a forma exata de um produto diádico $\boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T$?
 :::
 
 ::: {.callout-tip}
-## Julgamento de Verdadeiro ou Falso
+## Álgebra do Backpropagation
 Julgue V ou F — a questão só conta se acertar os 4 itens:
 
-- □ O erro da aproximação linear de Taylor satisfaz $|f(\mathbf{x}_0 + \mathbf{h}) - T_1(\mathbf{x}_0 + \mathbf{h})| \le \frac{L}{2}\|\mathbf{h}\|_2^2$ se o gradiente for $L$-Lipschitziano.
-- □ A minimização irrestrita da aproximação de Taylor de primeira ordem $T_1(\mathbf{x}_0 + \mathbf{h})$ sem penalidade proximal possui solução finita e bem definida se $\nabla f(\mathbf{x}_0) \neq \mathbf{0}$.
-- □ Se a matriz Hessiana $\nabla^2 f(\mathbf{x}_0) \succ 0$ for estritamente positiva definida, o minimizador da aproximação de segunda ordem $T_2(\mathbf{x}_0 + \mathbf{h})$ é exatamente o passo de Newton $\mathbf{h} = -[\nabla^2 f(\mathbf{x}_0)]^{-1} \nabla f(\mathbf{x}_0)$.
-- □ Se uma função $f$ for uma forma quadrática estrita, o resto de Taylor de segunda ordem $R_2(\mathbf{h})$ é identicamente nulo para qualquer vetor de deslocamento $\mathbf{h} \in \mathbb{R}^d$.
+- □ Em uma camada onde $W^{(l)} \in \mathbb{R}^{3 \times 4}$, o produto diádico $\boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T$ gera uma matriz de dimensão $3 \times 4$, perfeitamente compatível com a dimensão de $W^{(l)}$.
+- □ Se um neurônio oculto estiver saturado na função sigmoide (isto é, $|z^{(l)}_j| \gg 0$), sua derivada local $\sigma'(z^{(l)}_j) \approx 0$, bloqueando a passagem do gradiente para as camadas anteriores (desvanecimento do gradiente).
+- □ Para calcular os gradientes da camada 1, não é necessário armazenar as ativações intermediárias $\mathbf{a}^{(1)}$ da passagem direta, pois o sinal de erro $\boldsymbol{\delta}$ é auto-suficiente.
+- □ A complexidade temporal de calcular o gradiente de todos os pesos de uma rede densa via backpropagation analítico é assintoticamente da mesma ordem de grandeza da passagem direta.
 :::
 
 ::: {.content-visible when-format="revealjs"}
 ## Pausa Ativa 2 — Resposta
 
 ::: {.callout-tip}
-## Julgamento de V/F — Resposta
-- ✔ **V:** É a consequência imediata do Lema da Descida quadrático provado na Aula 8.
-- ✗ **F:** Sem penalidade, a função afim é ilimitada inferiormente: para $\mathbf{h} = -c \nabla f(\mathbf{x}_0)$ com $c \to \infty$, temos $T_1 \to -\infty$.
-- ✔ **V:** Igualando $\nabla_{\mathbf{h}} T_2 = \nabla f(\mathbf{x}_0) + \nabla^2 f(\mathbf{x}_0) \mathbf{h} = \mathbf{0}$, obtemos $\mathbf{h} = -H^{-1}\nabla f$ (o passo de Newton).
-- ✔ **V:** Em polinômios de grau 2, todas as derivadas de ordem 3 ou superior são nulas em todo o espaço.
+## Álgebra do Backpropagation — Resposta
+- ✔ **Verdadeiro:** $\boldsymbol{\delta} \in \mathbb{R}^{3 \times 1}$ e $\mathbf{a}^T \in \mathbb{R}^{1 \times 4}$, logo o produto externo tem dimensão $3 \times 4$.
+- ✔ **Verdadeiro:** Como $\sigma'(z) = \sigma(z)(1-\sigma(z))$, quando $z \to \pm \infty$, $\sigma'(z) \to 0$, anulando o produto de Hadamard em $\boldsymbol{\delta}$.
+- ✗ **Falso:** O gradiente $\nabla_{W^{(2)}}\mathcal{L} = \boldsymbol{\delta}^{(2)}(\mathbf{a}^{(1)})^T$ exige explicitamente as ativações da passagem direta.
+- ✔ **Verdadeiro:** Cada peso é tocado exatamente uma vez na passagem direta e uma vez na passagem reversa ($O(1)$ multiplicações por parâmetro).
 :::
 
 ::: {.fragment}
-**Voltando à pergunta:** Minimizar $T_2$ diretamente gera o **Método de Newton** $\mathbf{h} = -H^{-1}\nabla f$. Embora atinja convergência quadrática, calcular e inverter a matriz Hessiana $H \in \mathbb{R}^{d \times d}$ exige custo $O(d^3)$ e memória $O(d^2)$. Para $d = 10^7$ (redes neurais), isso exigiria centenas de terabytes de memória por iteração!
+**Voltando à pergunta:** A transposta $(W^{(l+1)})^T$ é o operador adjunto que mapeia o espaço de perturbação de saída de volta para o espaço de entrada da transformação linear. O produto diádico expressa que a taxa de variação da perda com relação ao peso $W_{jk}$ é proporcional a "quanto o neurônio $j$ precisava mudar" multiplicado por "quanto a entrada $k$ contribuiu".
 :::
 :::
 
-# Bloco 2: A Regra da Cadeia Multivariada e Composição de Funções
+# Bloco 2: Paradigmas de Diferenciação e Grafos de Computação
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## A Regra da Cadeia a Partir da Linearização Local
+## O Que é Diferenciação Automática e os Quatro Paradigmas
 
-Considere a composição de duas funções diferenciáveis:
-$$\mathbf{x} \in \mathbb{R}^n \xrightarrow{\mathbf{f}} \mathbf{u} = \mathbf{f}(\mathbf{x}) \in \mathbb{R}^m \xrightarrow{g} y = g(\mathbf{u}) \in \mathbb{R}$$
-onde $\mathbf{f}$ é um campo vetorial multivariado e $g$ é uma função escalar (por exemplo, a perda de um modelo). Queremos determinar como uma perturbação infinitesimal no vetor de entrada $d\mathbf{x}$ propaga-se até a saída escalar $dy$.
+O **Backpropagation** em redes neurais não é um algoritmo isolado inventado para aprendizado profundo, mas sim uma **instância especializada da Diferenciação Automática (*Automatic Differentiation* - Autodiff)**, uma das disciplinas mais elegantes da Análise Numérica e Ciência da Computação.
 
-Aplicando a aproximação linear de Taylor de primeira ordem para cada função:
-1. Para a função intermediária $\mathbf{f}$ em torno de $\mathbf{x}$:
-   $$\mathbf{f}(\mathbf{x} + d\mathbf{x}) - \mathbf{f}(\mathbf{x}) \approx d\mathbf{u}$$
-2. Para a função escalar final $g$ em torno de $\mathbf{u}$:
-   $$g(\mathbf{u} + d\mathbf{u}) - g(\mathbf{u}) \approx dg$$
+Na análise de complexidade que permeia toda a disciplina, definimos formalmente:
 
-Na linguagem do cálculo infinitesimal, a diferencial total da função escalar $g$ é dada pela soma ponderada das derivadas parciais:
-$$dg = \sum_{j=1}^m \frac{\partial g}{\partial u_j} du_j$$
-Por sua vez, cada componente intermediária $u_j = f_j(\mathbf{x})$ varia em função de todas as coordenadas da entrada $x_1, \dots, x_n$:
-$$du_j = \sum_{i=1}^n \frac{\partial f_j}{\partial x_i} dx_i$$
-Substituindo $du_j$ na expressão de $dg$:
-$$dg = \sum_{j=1}^m \frac{\partial g}{\partial u_j} \left( \sum_{i=1}^n \frac{\partial f_j}{\partial x_i} dx_i \right) = \sum_{i=1}^n \left( \sum_{j=1}^m \frac{\partial g}{\partial u_j} \frac{\partial f_j}{\partial x_i} \right) dx_i$$
-
-Como $dg = \sum_{i=1}^n \frac{\partial (g \circ \mathbf{f})}{\partial x_i} dx_i$, a identificação direta dos coeficientes de $dx_i$ fornece a forma clássica escalar indexada da regra da cadeia:
-
-::: {.callout-note icon=false}
-## Teorema (Regra da Cadeia Multivariada — Forma Escalar Indexada)
-
-A derivada parcial da composição $(g \circ \mathbf{f})$ em relação à variável de entrada $x_i$ é:
-$$\frac{\partial (g \circ \mathbf{f})}{\partial x_i}(\mathbf{x}) = \sum_{j=1}^m \frac{\partial g}{\partial u_j}\big(\mathbf{f}(\mathbf{x})\big) \frac{\partial f_j}{\partial x_i}(\mathbf{x})$$
+::: {.callout-note}
+## Definição: Custo de Avaliação Direta ($C_{\text{eval}}$)
+Denotamos por **$C_{\text{eval}}$ (*Cost of Evaluation*)** o custo computacional total (medido em tempo de execução ou número de operações aritméticas elementares) necessário para **avaliar a função original $f(\mathbf{x})$ para a frente uma única vez** (a passagem direta ou *forward pass*).
 :::
 
-### A Formulação Matricial Rigorosa sob *Denominator Layout*
+Para compreender o papel revolucionário da diferenciação automática, convém compará-la com as três abordagens concorrentes para se obter derivadas de um modelo computacional:
 
-Conforme consolidado desde a Aula 6 e registrado no progresso do curso, adotamos a convenção de **vetor gradiente como vetor-coluna** ($\nabla g \in \mathbb{R}^{m \times 1}$) e a matriz Jacobiana em **disposição pelo denominador** (*denominator layout*):
+| Paradigma | Mecanismo | Vantagens | Desvantagens Críticas |
+| :--- | :--- | :--- | :--- |
+| **Manual** | Cálculo analítico à mão com lápis e papel | Código altamente otimizado | Lento, propenso a erros humanos graves, inflexível a qualquer mudança arquitetural. |
+| **Numérico (Diferenças Finitas)** | Aproximação por quociente de Newton: $\frac{f(x+h)-f(x)}{h}$ | Funciona como caixa-preta (*black-box*) | Custo proibitivo $\mathcal{O}(d \cdot C_{\text{eval}})$ ($d$ passagens diretas); instabilidade numérica intrínseca (truncamento vs cancelamento). |
+| **Simbólico** | Manipulação algébrica de árvores sintáticas (ex: SymPy, Mathematica) | Fórmula analítica exata e fechada | **Inchaço de expressões (*expression swell*)**: duplicação exponencial de termos $\mathcal{O}(2^d)$ em cadeias profundas. |
+| **Automático (Autodiff)** | Regra da cadeia executada passo a passo em tempo de execução sobre variáveis intermediárias | **Exata em precisão de máquina**, linear em tempo, universal para código arbitrário | Exige memória para rastrear o grafo de execução (*trade-off* tempo-espaço). |
 
-::: {.callout-note icon=false}
-## Definição (Jacobiano em *Denominator Layout* — Aula 6)
-
-Para um mapeamento $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$, a matriz Jacobiana $J_{\mathbf{f}}(\mathbf{x}) \in \mathbb{R}^{n \times m}$ possui como colunas os gradientes das componentes escalares de $\mathbf{f}$:
-$$J_{\mathbf{f}}(\mathbf{x}) = \begin{bmatrix} \nabla f_1(\mathbf{x}) & \nabla f_2(\mathbf{x}) & \cdots & \nabla f_m(\mathbf{x}) \end{bmatrix} = \begin{bmatrix}
-\frac{\partial f_1}{\partial x_1} & \frac{\partial f_2}{\partial x_1} & \cdots & \frac{\partial f_m}{\partial x_1} \\
-\frac{\partial f_1}{\partial x_2} & \frac{\partial f_2}{\partial x_2} & \cdots & \frac{\partial f_m}{\partial x_2} \\
-\vdots & \vdots & \ddots & \vdots \\
-\frac{\partial f_1}{\partial x_n} & \frac{\partial f_2}{\partial x_n} & \cdots & \frac{\partial f_m}{\partial x_n}
-\end{bmatrix}$$
-:::
-
-Observe o alinhamento dimensional perfeito quando multiplicamos $J_{\mathbf{f}}(\mathbf{x})$ pelo vetor gradiente $\nabla_{\mathbf{u}} g$:
-$$\nabla_{\mathbf{x}} (g \circ \mathbf{f})(\mathbf{x}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g\big(\mathbf{f}(\mathbf{x})\big)$$
-*Conferindo as dimensões:*
-- $J_{\mathbf{f}}(\mathbf{x}) \in \mathbb{R}^{n \times m}$
-- $\nabla_{\mathbf{u}} g \in \mathbb{R}^{m \times 1}$
-- Produto resultante: $(n \times m) \times (m \times 1) = \mathbf{n \times 1}$, que é precisamente o vetor-coluna do gradiente $\nabla_{\mathbf{x}} (g \circ \mathbf{f}) \in \mathbb{R}^n$!
-
-Para a composição geral de duas funções vetoriais $\mathbf{x} \in \mathbb{R}^n \xrightarrow{\mathbf{f}} \mathbf{u} \in \mathbb{R}^m \xrightarrow{\mathbf{g}} \mathbf{y} \in \mathbb{R}^p$, os Jacobianos encadeiam-se por simples produto matricial:
-$$J_{\mathbf{g} \circ \mathbf{f}}(\mathbf{x}) = J_{\mathbf{f}}(\mathbf{x})\, J_{\mathbf{g}}\big(\mathbf{f}(\mathbf{x})\big)$$
-onde $(n \times p) = (n \times m) \times (m \times p)$. Essa elegância algébrica elimina qualquer necessidade de transposição artificial de vetores!
+: Comparação dos 4 Paradigmas de Diferenciação em Computação {.striped .hover}
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## A Regra da Cadeia Matricial (*Denominator Layout*)
+## Os Quatro Paradigmas de Diferenciação
 
 ::: {.callout-note}
-## Composição Escalar $\mathbf{x} \in \mathbb{R}^n \xrightarrow{\mathbf{f}} \mathbf{u} \in \mathbb{R}^m \xrightarrow{g} \mathbb{R}$
-O gradiente total em relação à entrada é dado por:
-$$\nabla_{\mathbf{x}}(g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$$
+## O que é $C_{\text{eval}}$?
+$C_{\text{eval}}$ (*Cost of Evaluation*) é o custo computacional (tempo / operações) para **avaliar a função $f(\mathbf{x})$ para a frente uma única vez** (*forward pass*).
 :::
 
 ::: {.fragment}
-## Checagem Dimensional Exata:
-- $J_{\mathbf{f}}(\mathbf{x}) \in \mathbb{R}^{n \times m}$ (colunas são $\nabla f_j$).
-- $\nabla_{\mathbf{u}} g \in \mathbb{R}^{m \times 1}$ (gradiente da perda em relação à camada intermediária).
-- Produto: $(n \times m) \times (m \times 1) = \mathbf{n \times 1}$ (vetor gradiente coluna de $\mathbf{x}$).
+- **1. Manual:** Deduzir à mão no papel.
+  - *Gargalo:* Inviável para redes com dezenas de camadas ou conexões residuais dinâmicas.
+:::
+::: {.fragment}
+- **2. Numérico (Diferenças Finitas):** $f'(x) \approx \frac{f(x+h)-f(x)}{h}$.
+  - *Gargalo:* Exige $d$ avaliações diretas completas ($\mathcal{O}(d \cdot C_{\text{eval}})$) e sofre de cancelamento subtrativo catastrófico.
+:::
+::: {.fragment}
+- **3. Simbólico:** Manipulação de árvores algébricas de fórmulas.
+  - *Gargalo:* **Inchaço de Expressões (*Expression Swell*)** $\mathcal{O}(2^d)$ por duplicação de subexpressões.
+:::
+::: {.fragment}
+- **4. Automático (Autodiff):**
+  - Aplica a regra da cadeia numericamente sobre **variáveis intermediárias** em tempo de execução.
+  - **Exato até a precisão da máquina**, sem aproximação numérica e sem explosão simbólica.
+:::
+:::
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+### A Instabilidade Numérica das Diferenças Finitas
+
+A diferenciação numérica por diferenças finitas ilustra com clareza por que métodos aproximados falham em otimização. Ao calcular $f'(x) \approx \frac{f(x+h) - f(x)}{h}$, enfrentamos um dilema insolúvel de ponto flutuante (IEEE 754):
+- Se $h$ for grande ($h > 10^{-5}$), o **erro de truncamento** da Série de Taylor domina ($\mathcal{O}(h)$ na progressiva, $\mathcal{O}(h^2)$ na central);
+- Se $h$ for excessivamente pequeno ($h < 10^{-8}$), $f(x+h)$ e $f(x)$ tornam-se quase idênticos em ponto flutuante, gerando **cancelamento subtrativo catastrófico** e amplificação do erro de arredondamento por $\frac{\epsilon_{\text{mach}}}{h}$.
+
+O gráfico abaixo evidencia a clássica curva em "V": o menor erro alcançável com precisão dupla (`float64`) ainda é de cerca de $10^{-8}$, enquanto a diferenciação automática atinge precisão perfeita de máquina ($< 10^{-16}$).
+
+::: {.fig-resize style="width: 80%; margin: 0 auto;"}
+```{python}
+#| echo: false
+#| fig-align: center
+
+fig, ax = plt.subplots(figsize=(8, 3.8))
+ax.loglog(steps_h, err_forward_diff, label=r"Diferença Progressiva: $\frac{f(x+h)-f(x)}{h}$", color=COR_C, lw=2)
+ax.loglog(steps_h, err_central_diff, label=r"Diferença Central: $\frac{f(x+h)-f(x-h)}{2h}$", color=COR_A, lw=2)
+
+ax.axvline(1e-8, color=COR_NEU, ls="--", alpha=0.7, label=r"Ótimo Teórico ($\approx \sqrt{\epsilon_{\mathrm{mach}}}$)")
+ax.set_xlabel("Tamanho do Passo de Perturbação $h$", fontsize=11)
+ax.set_ylabel("Erro Absoluto $|f'(x) - f'_{\mathrm{num}}(x)|$", fontsize=11)
+ax.set_title("Instabilidade de Ponto Flutuante em Diferenças Finitas", fontsize=12, fontweight="bold")
+ax.legend(frameon=True, loc="upper center")
+ax.grid(True, which="both", ls="--", alpha=0.4)
+
+ax.text(1e-2, 1e-1, "Erro de Truncamento\nDomina: $\\mathcal{O}(h)$", color=COR_C, fontsize=9, ha="center")
+ax.text(1e-14, 1e-1, "Cancelamento Subtrativo\nDomina: $\\mathcal{O}(\\epsilon_{\\mathrm{mach}}/h)$", color=COR_C, fontsize=9, ha="center")
+
+plt.tight_layout()
+plt.show()
+```
+:::
+:::
+
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## O Catálogo de Operações Atômicas e Suas Regras Simbólicas Pré-Computadas
+
+Como a Diferenciação Automática consegue ser perfeitamente exata sem expandir expressões no papel?
+
+::: {.callout-note icon=false}
+## Princípio Fundamental do Catálogo Atômico
+O sistema de diferenciação automática **não calcula derivadas do zero**. Em vez disso, ele apoia-se em um **catálogo fixo de derivadas simbólicas conhecidas** para cada operação elementar (*primitiva*) suportada pela máquina.
+:::
+
+Qualquer cálculo computacional arbitrário pode ser reduzido a um grafo de funções univariadas e bivariadas elementares. Para cada uma dessas primitivas, a derivada simbólica já foi pré-programada no sistema:
+
+| Operação Primitiva | Função Direta ($z$) | Derivadas Parciais Locais Pré-Computadas | Comportamento no *Backward Pass* |
+| :--- | :--- | :--- | :--- |
+| **Adição** | $z = x + y$ | $\frac{\partial z}{\partial x} = 1, \quad \frac{\partial z}{\partial y} = 1$ | **Distribuidor/Roteador:** entrega o sinal de erro intacto a ambas as entradas: $\bar{x} = \bar{z}, \; \bar{y} = \bar{z}$. |
+| **Subtração** | $z = x - y$ | $\frac{\partial z}{\partial x} = 1, \quad \frac{\partial z}{\partial y} = -1$ | **Inversor parcial:** $\bar{x} = \bar{z}, \; \bar{y} = -\bar{z}$. |
+| **Multiplicação** | $z = x \cdot y$ | $\frac{\partial z}{\partial x} = y, \quad \frac{\partial z}{\partial y} = x$ | **Troca cruzada ponderada:** $\bar{x} = y \cdot \bar{z}, \; \bar{y} = x \cdot \bar{z}$. |
+| **Divisão** | $z = \frac{x}{y}$ | $\frac{\partial z}{\partial x} = \frac{1}{y}, \quad \frac{\partial z}{\partial y} = -\frac{x}{y^2}$ | Escala pela recíproca e quadrado inverso. |
+| **Potência** | $z = x^k$ | $\frac{\partial z}{\partial x} = k x^{k-1}$ | Regra do tombo clássica. |
+| **Exponencial** | $z = \exp(x)$ | $\frac{\partial z}{\partial x} = \exp(x) = z$ | Auto-reprodução pelo valor de saída. |
+| **Logaritmo** | $z = \ln(x)$ | $\frac{\partial z}{\partial x} = \frac{1}{x}$ | Escala pelo inverso da entrada. |
+| **Cosseno** | $z = \cos(x)$ | $\frac{\partial z}{\partial x} = -\sin(x)$ | Modulação senoidal negativa. |
+| **Seno** | $z = \sin(x)$ | $\frac{\partial z}{\partial x} = \cos(x)$ | Modulação cossenoidal. |
+| **Raiz Quadrada** | $z = \sqrt{x}$ | $\frac{\partial z}{\partial x} = \frac{1}{2\sqrt{x}} = \frac{1}{2z}$ | Inverso do dobro da saída. |
+| **Sigmoide** | $z = \sigma(x)$ | $\frac{\partial z}{\partial x} = \sigma(x)(1 - \sigma(x)) = z(1-z)$ | Aproveita diretamente o valor ativado $z$. |
+| **ReLU** | $z = \max(0, x)$ | $\frac{\partial z}{\partial x} = \mathbf{1}(x > 0)$ | Válvula liga/desliga: gradiente passa se $x>0$, zera se $x \le 0$. |
+
+: Catálogo de Derivadas Simbólicas Locais Pré-Programadas {.striped .hover}
+
+### O Papel Singular da Regra da Adição
+
+Note com atenção especial a **Regra da Adição**:
+$$z = x + y \implies \frac{\partial z}{\partial x} = 1, \quad \frac{\partial z}{\partial y} = 1$$
+
+Quando o sinal de erro $\bar{z} := \frac{\partial \mathcal{L}}{\partial z}$ chega ao nó de adição pela passagem reversa, a regra da cadeia produz:
+$$\bar{x} = \bar{z} \cdot \frac{\partial z}{\partial x} = \bar{z} \cdot 1 = \bar{z}, \qquad \bar{y} = \bar{z} \cdot \frac{\partial z}{\partial y} = \bar{z} \cdot 1 = \bar{z}$$
+
+A adição age como um **divisor perfeito de sinal**: ela não escala, não atenua e não distorce o gradiente; ela simplesmente bifurca o eco $\bar{z}$ de forma idêntica e simultânea para todos os seus afluentes.
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Catálogo de Derivadas Simbólicas Pré-Computadas
+
+::: {.callout-note icon=false}
+## Como a Autodiff Opera
+O sistema não deduz derivadas: ele possui uma **tabela pré-programada** de derivadas locais analíticas para cada operação atômica.
+:::
+
+::: {.fragment}
+- **Adição ($z = x + y$):** $\frac{\partial z}{\partial x} = 1, \quad \frac{\partial z}{\partial y} = 1$
+- **Multiplicação ($z = x \cdot y$):** $\frac{\partial z}{\partial x} = y, \quad \frac{\partial z}{\partial y} = x$
+- **Potência ($z = x^k$):** $\frac{\partial z}{\partial x} = k x^{k-1}$
+- **Exponencial ($z = \exp(x)$):** $\frac{\partial z}{\partial x} = \exp(x)$
+- **Cosseno ($z = \cos(x)$):** $\frac{\partial z}{\partial x} = -\sin(x)$
+- **Raiz ($z = \sqrt{x}$):** $\frac{\partial z}{\partial x} = \frac{1}{2\sqrt{x}}$
+- **Sigmoide ($z = \sigma(x)$):** $\frac{\partial z}{\partial x} = z(1-z)$
+:::
+
+::: {.fragment .callout-tip}
+## O Segredo da Adição no Backward Pass
+Como $\frac{\partial (x+y)}{\partial x} = 1$ e $\frac{\partial (x+y)}{\partial y} = 1$, a adição age como um **roteador neutro**: ela replica o gradiente recebido $\bar{z}$ integralmente para ambas as entradas ($\bar{x} = \bar{z}, \bar{y} = \bar{z}$).
+:::
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## Decomposição em Variáveis Intermediárias e Grafos Acíclicos Direcionados (DAGs)
+
+Munidos desse catálogo de primitivas, qualquer função ou programa pode ser decomposto em uma sequência estrita de atribuições a **variáveis intermediárias**.
+
+Retomemos a função que motivou nosso dilema do inchaço simbólico:
+$$f(x) = \sqrt{x^2 + \exp(x^2)} + \cos(x^2 + \exp(x^2))$$
+
+Em vez de escrever a derivada inteira de uma só vez, decompomos a função em operações do nosso catálogo:
+$$\begin{aligned}
+a &= x^2 && \text{(Potência: } k=2\text{)} \\
+b &= \exp(a) && \text{(Exponencial)} \\
+c &= a + b && \text{(Adição)} \\
+d &= \sqrt{c} && \text{(Raiz Quadrada)} \\
+e &= \cos(c) && \text{(Cosseno)} \\
+f &= d + e && \text{(Adição Final)}
+\end{aligned}$$
+
+Essa sequência de variáveis intermediárias define a topologia de um **Grafo Acíclico Direcionado (DAG)**, onde os nós são as variáveis numéricas e as arestas representam a aplicação das primitivas atômicas:
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Variáveis Intermediárias e o Grafo de Computação
+
+$$f(x) = \sqrt{x^2 + \exp(x^2)} + \cos(x^2 + \exp(x^2))$$
+
+::: {.columns}
+::: {.column width="45%"}
+**Decomposição em Variáveis:**
+
+- $a = x^2$
+- $b = \exp(a)$
+- $c = a + b$
+- $d = \sqrt{c}$
+- $e = \cos(c)$
+- $f = d + e$
+:::
+::: {.column width="55%"}
+::: {.callout-note icon=false}
+## O Grafo Computacional
+- **Nós:** Variáveis intermediárias ($a, b, c, d, e, f$).
+- **Arestas:** Operações atômicas com derivadas locais conhecidas da tabela.
+:::
+:::
+:::
+:::
+
+::: {.fig-resize style="width: 90%; margin: 0 auto;"}
+```{.tikz}
+\definecolor{icblue}{HTML}{0085CA}
+\definecolor{icorange}{HTML}{FF5E00}
+\definecolor{icred}{HTML}{E03C31}
+\begin{tikzpicture}[
+  var/.style={circle, draw=icorange, fill=icorange!12, thick, minimum size=0.95cm, font=\small\bfseries},
+  op/.style={rectangle, draw=icblue, fill=icblue!12, rounded corners=3pt, thick, minimum size=0.85cm, font=\small},
+  edge/.style={-Stealth, thick, color=black!75}
+]
+  \node[var] (x) at (0, 0) {$x$};
+  \node[op] (sq) at (1.8, 0) {$(\cdot)^2$};
+  \node[var] (a) at (3.4, 0) {$a$};
+  
+  \node[op] (exp) at (5.2, 1.2) {$\exp(\cdot)$};
+  \node[var] (b) at (6.8, 1.2) {$b$};
+  
+  \node[op] (add1) at (8.0, 0) {$+$};
+  \node[var] (c) at (9.4, 0) {$c$};
+  
+  \node[op] (sqrt) at (11.0, 1.2) {$\sqrt{\cdot}$};
+  \node[var] (d) at (12.6, 1.2) {$d$};
+  
+  \node[op] (cos) at (11.0, -1.2) {$\cos(\cdot)$};
+  \node[var] (e) at (12.6, -1.2) {$e$};
+  
+  \node[op] (add2) at (14.0, 0) {$+$};
+  \node[var, draw=icblue, fill=icblue!20] (f) at (15.5, 0) {$f$};
+
+  \draw[edge] (x) -- (sq);
+  \draw[edge] (sq) -- (a);
+  
+  \draw[edge] (a) to[bend left=15] (exp);
+  \draw[edge] (exp) -- (b);
+  \draw[edge] (b) to[bend left=15] (add1);
+  \draw[edge] (a) -- (add1);
+  
+  \draw[edge] (add1) -- (c);
+  
+  \draw[edge] (c) to[bend left=15] (sqrt);
+  \draw[edge] (sqrt) -- (d);
+  \draw[edge] (d) to[bend left=15] (add2);
+  
+  \draw[edge] (c) to[bend right=15] (cos);
+  \draw[edge] (cos) -- (e);
+  \draw[edge] (e) to[bend right=15] (add2);
+  
+  \draw[edge] (add2) -- (f);
+\end{tikzpicture}
+```
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## A Regra da Cadeia Multivariada em Grafos: Princípio da Acumulação em Bifurcações
+
+Para retropropagar a derivada da saída $f$ até a entrada $x$, consultamos as derivadas locais do nosso catálogo e aplicamos a regra da cadeia no sentido inverso.
+
+As derivadas locais imediatas retiradas diretamente da tabela são:
+$$\begin{aligned}
+\frac{\partial a}{\partial x} &= 2x, \quad &\frac{\partial b}{\partial a} &= \exp(a), \quad &\frac{\partial c}{\partial a} &= 1, \quad &\frac{\partial c}{\partial b} &= 1 \\
+\frac{\partial d}{\partial c} &= \frac{1}{2\sqrt{c}}, \quad &\frac{\partial e}{\partial c} &= -\sin(c), \quad &\frac{\partial f}{\partial d} &= 1, \quad &\frac{\partial f}{\partial e} &= 1
+\end{aligned}$$
+
+Agora acompanhe o **recuo reverso passo a passo**:
+
+1. **Inicialização:** A sensibilidade da saída em relação a si mesma é $\frac{\partial f}{\partial f} = 1$.
+2. **Propagação pela adição final ($f = d + e$):**
+   Pela regra da adição, o sinal 1 é replicado para $d$ e $e$:
+   $$\frac{\partial f}{\partial d} = \frac{\partial f}{\partial f}\frac{\partial f}{\partial d} = 1 \cdot 1 = 1, \qquad \frac{\partial f}{\partial e} = \frac{\partial f}{\partial f}\frac{\partial f}{\partial e} = 1 \cdot 1 = 1$$
+3. **Bifurcação no nó $c$ (Soma de Caminhos Incidentes):**
+   A variável $c$ alimenta dois nós distintos ($d$ e $e$). Pela regra da cadeia multivariada, a sensibilidade total de $c$ é a **soma de todas as rotas direcionadas** que partem de $c$ até a saída:
+   $$\frac{\partial f}{\partial c} = \frac{\partial f}{\partial d}\frac{\partial d}{\partial c} + \frac{\partial f}{\partial e}\frac{\partial e}{\partial c} = 1 \cdot \frac{1}{2\sqrt{c}} + 1 \cdot (-\sin(c))$$
+4. **Propagação para $b$ ($c = a + b$):**
+   $$\frac{\partial f}{\partial b} = \frac{\partial f}{\partial c}\frac{\partial c}{\partial b} = \frac{\partial f}{\partial c} \cdot 1$$
+5. **Bifurcação no nó $a$ (Soma de Caminhos Incidentes):**
+   A variável $a$ afeta a saída por **dois canais**: alimenta $b$ (que alimenta $c$) e alimenta $c$ diretamente. Devemos somar as duas contribuições:
+   $$\frac{\partial f}{\partial a} = \frac{\partial f}{\partial b}\frac{\partial b}{\partial a} + \frac{\partial f}{\partial c}\frac{\partial c}{\partial a} = \frac{\partial f}{\partial b}\exp(a) + \frac{\partial f}{\partial c} \cdot 1$$
+6. **Propagação Final para a Entrada $x$ ($a = x^2$):**
+   $$\frac{\partial f}{\partial x} = \frac{\partial f}{\partial a}\frac{\partial a}{\partial x} = \frac{\partial f}{\partial a} \cdot (2x)$$
+
+::: {.callout-note icon=false}
+## Teorema Geral de Acumulação em DAGs
+Seja um programa expresso como um DAG de variáveis $\{x_1, \dots, x_D\}$, onde $x_D$ é a saída escalar e $x_i = g_i(x_{\text{Pa}(x_i)})$. Definindo o adjunto $\bar{x}_i := \frac{\partial x_D}{\partial x_i}$, o valor exato de $\bar{x}_i$ satisfaz:
+$$\bar{x}_D = 1, \qquad \bar{x}_i = \sum_{x_j \in \text{Filhos}(x_i)} \bar{x}_j \, \frac{\partial x_j}{\partial x_i}$$
+onde a derivada local $\frac{\partial x_j}{\partial x_i}$ provém diretamente do catálogo de primitivas.
+:::
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Acúmulo em Bifurcações: Regra da Cadeia Reversa
+
+::: {.fragment}
+- **Passo 1 (Adição Final):** $\frac{\partial f}{\partial d} = 1, \quad \frac{\partial f}{\partial e} = 1$.
+:::
+
+::: {.fragment}
+- **Passo 2 (Bifurcação em $c$):** Como $c$ afeta tanto $d$ quanto $e$, somamos os caminhos:
+  $$\frac{\partial f}{\partial c} = \frac{\partial f}{\partial d}\frac{\partial d}{\partial c} + \frac{\partial f}{\partial e}\frac{\partial e}{\partial c} = 1 \cdot \frac{1}{2\sqrt{c}} - \sin(c)$$
+:::
+
+::: {.fragment}
+- **Passo 3 (Bifurcação em $a$):** $a$ afeta $b$ e alimenta $c$ diretamente:
+  $$\frac{\partial f}{\partial a} = \frac{\partial f}{\partial b}\frac{\partial b}{\partial a} + \frac{\partial f}{\partial c}\frac{\partial c}{\partial a} = \frac{\partial f}{\partial b}\exp(a) + \frac{\partial f}{\partial c} \cdot 1$$
+:::
+
+::: {.fragment}
+- **Passo 4 (Entrada $x$):** $\frac{\partial f}{\partial x} = \frac{\partial f}{\partial a}(2x)$.
 :::
 
 ::: {.fragment .callout-important}
-## Composição Vetorial Geral: $\mathbf{x} \xrightarrow{\mathbf{f}} \mathbf{u} \xrightarrow{\mathbf{g}} \mathbf{y} \in \mathbb{R}^p$
-$$J_{\mathbf{g} \circ \mathbf{f}}(\mathbf{x}) = J_{\mathbf{f}}(\mathbf{x})\, J_{\mathbf{g}}\big(\mathbf{f}(\mathbf{x})\big), \quad (n \times p) = (n \times m) \times (m \times p)$$
+## Regra Geral em DAGs
+$$\bar{x}_i := \frac{\partial f}{\partial x_i} = \sum_{x_j \in \text{Filhos}(x_i)} \bar{x}_j \, \frac{\partial x_j}{\partial x_i}$$
+*Cada nó acumula a soma ponderada de todos os nós que ele alimenta diretamente!*
 :::
 :::
 
-## Pausa Ativa 3: A Mecânica Tensorial da Regra da Cadeia
+## Pausa Ativa 3 — Grafos de Computação
 
 ::: {.callout-tip}
 ## Pergunta Aberta
-Se tivermos uma composição de 4 funções vetoriais $\mathbf{x}_0 \xrightarrow{\mathbf{f}_1} \mathbf{x}_1 \xrightarrow{\mathbf{f}_2} \mathbf{x}_2 \xrightarrow{\mathbf{f}_3} \mathbf{x}_3 \xrightarrow{L} \mathbb{R}$, o produto associativo de matrizes nos permite multiplicar os Jacobianos da esquerda para a direita ou da direita para a esquerda. Qual dessas duas ordens é ordens de grandeza mais barata computacionalmente e por quê?
-
-*Dica para discussão:* Compare as dimensões ao multiplicar matriz por matriz versus matriz por vetor coluna.
+Se um nó intermediário em um grafo de computação possui 3 arestas de saída (alimenta 3 variáveis subsequentes), por que a sua sensibilidade total acumulada é estritamente a **soma** das sensibilidades parciais que retornam de cada aresta, e o que aconteceria com o cálculo se uma biblioteca esquecesse de somar e simplesmente sobrescrevesse o valor do gradiente?
 :::
 
 ::: {.callout-tip}
-## Julgamento de Verdadeiro ou Falso
+## Propriedades dos Grafos de Autodiff
 Julgue V ou F — a questão só conta se acertar os 4 itens:
 
-- □ Na convenção *denominator layout*, a $j$-ésima coluna da matriz Jacobiana $J_{\mathbf{f}}(\mathbf{x})$ corresponde ao vetor gradiente da componente escalar $f_j(\mathbf{x})$.
-- □ Se $\mathbf{u} = A \mathbf{x}$ com $A \in \mathbb{R}^{m \times n}$ e $\mathbf{x} \in \mathbb{R}^n$, o Jacobiano $J_{\mathbf{u}}(\mathbf{x})$ em *denominator layout* é a matriz transposta $A^T \in \mathbb{R}^{n \times m}$.
-- □ A regra da cadeia multivariada pode ser interpretada como a composição de transformações lineares representadas pelas matrizes Jacobianas locais.
-- □ Na convenção *numerator layout*, o gradiente de uma função escalar $f: \mathbb{R}^n \to \mathbb{R}$ é representado por um vetor coluna $n \times 1$.
+- □ O motor de diferenciação automática não precisa aplicar regras de cálculo simbólico em tempo de execução para cada programa: ele apenas avalia numericamente as derivadas de um catálogo fechado de operações atômicas pré-programadas.
+- □ A regra da adição $z = x + y$ atua no backward pass como um divisor idêntico de fluxo, propagando o gradiente $\bar{z}$ integralmente para ambas as variáveis $x$ e $y$ ($\bar{x} = \bar{z}$ e $\bar{y} = \bar{z}$).
+- □ Em um nó com múltiplas arestas de saída (bifurcação), substituir o operador de acúmulo `+=` por atribuição simples `=` preserva a correção do gradiente desde que as variáveis sejam processadas em ordem alfabética.
+- □ A diferenciação automática evita o inchaço de expressões (*expression swell*) porque nunca constrói a fórmula algébrica simbólica expandida global da derivada no papel.
 :::
 
 ::: {.content-visible when-format="revealjs"}
 ## Pausa Ativa 3 — Resposta
 
 ::: {.callout-tip}
-## Julgamento de V/F — Resposta
-- ✔ **V:** No *denominator layout*, cada coluna $j$ armazena $\nabla_{\mathbf{x}} f_j \in \mathbb{R}^n$.
-- ✔ **V:** Para $\mathbf{u} = A\mathbf{x}$, temos $u_j = \sum_k A_{jk} x_k \implies \frac{\partial u_j}{\partial x_i} = A_{ji} \implies J = A^T$.
-- ✔ **V:** As aproximações lineares se compõem: $d\mathbf{y} = J_{\mathbf{g}}^T d\mathbf{u} = J_{\mathbf{g}}^T (J_{\mathbf{f}}^T d\mathbf{x})$.
-- ✗ **F:** No *numerator layout* (adotado pelo MathML), a derivada escalar por vetor é um vetor linha $1 \times n$.
+## Propriedades dos Grafos de Autodiff — Resposta
+- ✔ **Verdadeiro:** O catálogo de derivadas primitivas é fixo na implementação (C++/CUDA/Python); a autodiff apenas conecta numericamente as regras locais via cadeia.
+- ✔ **Verdadeiro:** Como $\frac{\partial (x+y)}{\partial x} = 1$ e $\frac{\partial (x+y)}{\partial y} = 1$, a adição não atenua nem altera o gradiente.
+- ✗ **Falso:** Atribuição simples `=` sobrescreveria o sinal de erro de um dos caminhos, violando a regra da cadeia multivariada (que exige a soma de todos os caminhos incidentes).
+- ✔ **Verdadeiro:** A autodiff avalia números intermediários diretamente em tempo de execução, contornando a explosão exponencial de termos.
 :::
 
 ::: {.fragment}
-**Voltando à pergunta:** Como a perda final $L$ é um escalar ($p=1$), seu gradiente $\nabla L$ é um vetor coluna. Multiplicar da direita para a esquerda acumula sucessivas multiplicações **matriz-vetor** ($O(n^2)$), enquanto multiplicar da esquerda para a direita envolveria produtos **matriz-matriz** ($O(n^3)$). Essa assimetria fundamental é a razão da eficiência do algoritmo de *Backpropagation*!
+**Voltando à pergunta:** A regra da cadeia multivariada estabelece que a variação total na saída provocada por uma perturbação no nó é a soma das variações propagadas por cada caminho independente. Sobrescrever o gradiente ignoraria os efeitos de um dos ramos, gerando direções de descida matematicamente erradas e impedindo a convergência da rede.
 :::
 :::
 
-# Bloco 3: Propagação de Sensibilidades em Perceptrons Multicamadas (MLP)
+# Bloco 3: Modos de Diferenciação Automática: Forward vs. Reverse
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## O Grafo Estrutural de uma Camada Densa
+## A Dualidade Pela Associatividade da Multiplicação de Matrizes
 
-Considere uma rede neural densa (*Multilayer Perceptron*) com $L$ camadas. A passagem direta (*forward pass*) para uma única amostra de entrada $\mathbf{x} = \mathbf{a}^{(0)} \in \mathbb{R}^{d_0}$ é definida pela recorrência:
-Para $l = 1, 2, \dots, L$:
-$$\mathbf{z}^{(l)} = W^{(l)} \mathbf{a}^{(l-1)} + \mathbf{b}^{(l)} \in \mathbb{R}^{d_l}$$
-$$\mathbf{a}^{(l)} = \sigma\big(\mathbf{z}^{(l)}\big) \in \mathbb{R}^{d_l}$$
-onde $W^{(l)} \in \mathbb{R}^{d_l \times d_{l-1}}$ é a matriz de pesos, $\mathbf{b}^{(l)} \in \mathbb{R}^{d_l}$ é o vetor de viés, e $\sigma$ é a função de ativação aplicada elemento a elemento. Na última camada $l = L$, frequentemente usamos a função identidade para regressão ($\mathbf{a}^{(L)} = \mathbf{z}^{(L)} = \hat{\mathbf{y}}$). A perda escalar sobre uma amostra com alvo $\mathbf{y}$ é $\mathcal{L}(\hat{\mathbf{y}}, \mathbf{y})$.
+Agora que dominamos a representação em grafos e o catálogo de operações atômicas, enfrentamos a pergunta fundamental:
 
-Desejamos calcular os gradientes da perda em relação a todos os parâmetros da rede:
-$$\nabla_{W^{(l)}} \mathcal{L} \in \mathbb{R}^{d_l \times d_{l-1}} \quad \text{e} \quad \nabla_{\mathbf{b}^{(l)}} \mathcal{L} \in \mathbb{R}^{d_l}$$
+> **Em qual direção devemos propagar a regra da cadeia no grafo? Da entrada para a saída (*Forward*) ou da saída para a entrada (*Reverse*)?**
 
-### O Vetor de Sensibilidade (Erro Local) $\boldsymbol{\delta}^{(l)}$
+A resposta revela uma das dualidades mais profundas da álgebra linear computacional: **ambos os modos calculam rigorosamente a mesma Jacobiana total**, diferindo unicamente na **associatividade da multiplicação matricial**.
 
-Para organizar a propagação da regra da cadeia sem redundância de cálculo, definimos uma variável canônica intermediária essencial:
+Considere uma cadeia de $K$ transformações multivariadas consecutivas entre espaços euclidianos:
+$$\mathbf{x}_0 \in \mathbb{R}^{n_0} \xrightarrow{\mathbf{f}_1} \mathbf{x}_1 \in \mathbb{R}^{n_1} \xrightarrow{\mathbf{f}_2} \mathbf{x}_2 \in \mathbb{R}^{n_2} \dots \xrightarrow{\mathbf{f}_K} \mathbf{x}_K \in \mathbb{R}^{n_K}$$
 
-::: {.callout-note icon=false}
-## Definição (Vetor de Sensibilidade / Erro Local)
+Pela regra da cadeia multivariada, a matriz Jacobiana total da composição $J \in \mathbb{R}^{n_K \times n_0}$ é o produto encadeado das matrizes Jacobianas locais:
+$$J = J_K \cdot J_{K-1} \cdot J_{K-2} \cdots J_2 \cdot J_1$$
+onde cada matriz intermediária $J_i := \frac{\partial \mathbf{x}_i}{\partial \mathbf{x}_{i-1}} \in \mathbb{R}^{n_i \times n_{i-1}}$.
 
-O vetor de sensibilidade $\boldsymbol{\delta}^{(l)} \in \mathbb{R}^{d_l}$ da camada $l$ é o gradiente da perda $\mathcal{L}$ em relação à ativação pré-sináptica linear $\mathbf{z}^{(l)}$:
-$$\boldsymbol{\delta}^{(l)} := \nabla_{\mathbf{z}^{(l)}} \mathcal{L} = \begin{bmatrix} \frac{\partial \mathcal{L}}{\partial z_1^{(l)}} \\ \vdots \\ \frac{\partial \mathcal{L}}{\partial z_{d_l}^{(l)}} \end{bmatrix}$$
-:::
-
-### Passo 1: Sensibilidade na Camada de Saída ($l = L$)
-
-Para a perda quadrática unidimensional $\mathcal{L} = \frac{1}{2}(\hat{y} - y)^2$ com saída linear $\hat{y} = z^{(L)}$:
-$$\delta^{(L)} = \frac{\partial \mathcal{L}}{\partial z^{(L)}} = \hat{y} - y$$
-Em problemas multivariados com saída vetorial e função de ativação final $\mathbf{a}^{(L)} = \sigma(\mathbf{z}^{(L)})$, aplicamos a regra da cadeia univariada em cada coordenada:
-$$\delta_i^{(L)} = \frac{\partial \mathcal{L}}{\partial z_i^{(L)}} = \frac{\partial \mathcal{L}}{\partial a_i^{(L)}} \sigma'\big(z_i^{(L)}\big) \iff \boldsymbol{\delta}^{(L)} = \nabla_{\mathbf{a}^{(L)}} \mathcal{L} \odot \sigma'\big(\mathbf{z}^{(L)}\big)$$
-onde $\odot$ denota o produto de Hadamard (multiplicação elemento a elemento).
-
-### Passo 2: Recursão Retrógrada de Sensibilidade ($l \to l-1$)
-
-Suponha conhecido o vetor de sensibilidade da camada seguinte $\boldsymbol{\delta}^{(l+1)} \in \mathbb{R}^{d_{l+1}}$. Como obter $\boldsymbol{\delta}^{(l)}$?
-Observe a cadeia funcional que liga $\mathbf{z}^{(l)}$ à perda:
-$$\mathbf{z}^{(l)} \xrightarrow{\sigma} \mathbf{a}^{(l)} \xrightarrow{W^{(l+1)}\mathbf{a}^{(l)} + \mathbf{b}^{(l+1)}} \mathbf{z}^{(l+1)} \longrightarrow \cdots \longrightarrow \mathcal{L}$$
-
-Aplicando a regra da cadeia multivariada componente a componente:
-$$\delta_j^{(l)} = \frac{\partial \mathcal{L}}{\partial z_j^{(l)}} = \sum_{k=1}^{d_{l+1}} \frac{\partial \mathcal{L}}{\partial z_k^{(l+1)}} \frac{\partial z_k^{(l+1)}}{\partial z_j^{(l)}}$$
-Sabemos que $z_k^{(l+1)} = \sum_{m=1}^{d_l} W_{km}^{(l+1)} a_m^{(l)} + b_k^{(l+1)}$. Portanto:
-$$\frac{\partial z_k^{(l+1)}}{\partial a_j^{(l)}} = W_{kj}^{(l+1)}$$
-Como $a_j^{(l)} = \sigma(z_j^{(l)})$, temos:
-$$\frac{\partial z_k^{(l+1)}}{\partial z_j^{(l)}} = \frac{\partial z_k^{(l+1)}}{\partial a_j^{(l)}} \frac{\partial a_j^{(l)}}{\partial z_j^{(l)}} = W_{kj}^{(l+1)} \sigma'\big(z_j^{(l)}\big)$$
-Substituindo de volta na soma:
-$$\delta_j^{(l)} = \sum_{k=1}^{d_{l+1}} \delta_k^{(l+1)} W_{kj}^{(l+1)} \sigma'\big(z_j^{(l)}\big) = \left( \sum_{k=1}^{d_{l+1}} W_{kj}^{(l+1)} \delta_k^{(l+1)} \right) \sigma'\big(z_j^{(l)}\big)$$
-
-Reconhecemos a soma interna como a $j$-ésima componente do produto matriz-vetor $(W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}$! Portanto, em notação vetorial compacta:
-
-::: {.callout-note icon=false}
-## Teorema (Equação Fundamental da Retropropagação de Sensibilidade)
-
-O vetor de sensibilidade propaga-se da camada $l+1$ para a camada $l$ através da equação linear-modular:
-$$\boldsymbol{\delta}^{(l)} = \Big( (W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)} \Big) \odot \sigma'\big(\mathbf{z}^{(l)}\big)$$
-onde $(W^{(l+1)})^T \in \mathbb{R}^{d_l \times d_{l+1}}$ projeta o erro de volta ao espaço da camada anterior e a multiplicação por $\sigma'(\mathbf{z}^{(l)})$ atua como uma comporta diferencial local.
-:::
-
-### Passo 3: Derivação dos Gradientes dos Pesos e Vieses
-
-Conhecido o vetor de sensibilidade $\boldsymbol{\delta}^{(l)}$, o cálculo das derivadas dos parâmetros da camada $l$ torna-se trivial.
-Para o viés $\mathbf{b}^{(l)}$:
-Como $z_i^{(l)} = \sum_j W_{ij}^{(l)} a_j^{(l-1)} + b_i^{(l)}$, temos $\frac{\partial z_i^{(l)}}{\partial b_k^{(l)}} = \delta_{ik}$ (delta de Kronecker). Logo:
-$$\frac{\partial \mathcal{L}}{\partial b_i^{(l)}} = \frac{\partial \mathcal{L}}{\partial z_i^{(l)}} = \delta_i^{(l)} \iff \nabla_{\mathbf{b}^{(l)}} \mathcal{L} = \boldsymbol{\delta}^{(l)}$$
-
-Para a matriz de pesos $W^{(l)}$:
-A componente $W_{ij}^{(l)}$ afeta exclusivamente a pré-ativação $z_i^{(l)}$, e sua derivada é $\frac{\partial z_i^{(l)}}{\partial W_{ij}^{(l)}} = a_j^{(l-1)}$. Pela regra da cadeia:
-$$\frac{\partial \mathcal{L}}{\partial W_{ij}^{(l)}} = \frac{\partial \mathcal{L}}{\partial z_i^{(l)}} \frac{\partial z_i^{(l)}}{\partial W_{ij}^{(l)}} = \delta_i^{(l)} a_j^{(l-1)}$$
-
-Essa identidade escalar expressa que a matriz de derivadas é dada pelo produto externo do vetor de erro pelo vetor de ativação da camada anterior:
-
-::: {.callout-note icon=false}
-## Teorema (Gradiente Matricial de Pesos — Produto Externo Erro-Ativação)
-
-O gradiente da perda em relação à matriz de pesos $W^{(l)} \in \mathbb{R}^{d_l \times d_{l-1}}$ é dado exatamente pelo produto diádico (externo):
-$$\nabla_{W^{(l)}} \mathcal{L} = \boldsymbol{\delta}^{(l)} \big(\mathbf{a}^{(l-1)}\big)^T$$
-*Conferindo as dimensões:*
-- $\boldsymbol{\delta}^{(l)} \in \mathbb{R}^{d_l \times 1}$
-- $\big(\mathbf{a}^{(l-1)}\big)^T \in \mathbb{R}^{1 \times d_{l-1}}$
-- Produto externo resultante: $d_l \times d_{l-1}$, casando perfeitamente com a dimensão de $W^{(l)}$!
-:::
-
-Quando consideramos um conjunto de dados ou mini-batch de tamanho $N$, a média dos produtos externos individuais acumula-se matricialmente como:
-$$\nabla_{W^{(l)}} \mathcal{L}_{\text{batch}} = \frac{1}{N} (\Delta^{(l)})^T A^{(l-1)}$$
-onde $\Delta^{(l)} \in \mathbb{R}^{N \times d_l}$ reúne os vetores $\boldsymbol{\delta}^{(l)}$ por linhas e $A^{(l-1)} \in \mathbb{R}^{N \times d_{l-1}}$ reúne as ativações da camada anterior.
+Como a multiplicação de matrizes é **associativa**, $(A B) C = A (B C)$, o resultado matemático final de $J$ independe da ordem dos parênteses. Entretanto, o **custo computacional** e o **consumo de memória** de diferentes parentizações divergem de forma colossal!
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## As Equações do Backpropagation
+## A Dualidade: Associatividade da Regra da Cadeia
 
-::: {.callout-note}
-## O Vetor de Sensibilidade $\boldsymbol{\delta}^{(l)} = \nabla_{\mathbf{z}^{(l)}}\mathcal{L}$
-1. **Saída ($l=L$):**
-   $$\boldsymbol{\delta}^{(L)} = \nabla_{\mathbf{a}^{(L)}}\mathcal{L} \odot \sigma'(\mathbf{z}^{(L)})$$
-2. **Propagação para Trás ($l \leftarrow l+1$):**
-   $$\boldsymbol{\delta}^{(l)} = \big((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}\big) \odot \sigma'(\mathbf{z}^{(l)})$$
+Seja uma composição de $K$ transformações multivariadas:
+$$\mathbf{x}_0 \xrightarrow{\mathbf{f}_1} \mathbf{x}_1 \xrightarrow{\mathbf{f}_2} \dots \xrightarrow{\mathbf{f}_K} \mathbf{x}_K$$
+
+A Jacobiana total é o produto de matrizes:
+$$J = J_K \cdot J_{K-1} \cdots J_2 \cdot J_1$$
+
+::: {.fragment .callout-note icon=false}
+## O Teorema da Associatividade
+A multiplicação matricial é associativa: $(A B) C = A (B C)$.
+
+- Ambos os modos alcançam o **mesmo resultado exato**.
+- A escolha dos parênteses determina se fazemos produtos **Matriz $\times$ Vetor** ou **Vetor $\times$ Matriz**!
+:::
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## O Modo Forward: Tangentes e Produtos Jacobiana-Vetor (JVP)
+
+No **Modo Forward** (também denominado modo tangente ou *pushforward*), agrupamos os parênteses da **direita para a esquerda**:
+$$J \cdot \mathbf{v} = J_K \Big( J_{K-1} \Big( \dots \Big( J_2 \big( J_1 \mathbf{v} \big) \Big) \dots \Big) \Big)$$
+onde $\mathbf{v} \in \mathbb{R}^{n_0}$ é um vetor de perturbação direcional inicial na entrada.
+
+Observe o que acontece em cada passo:
+1. Multiplicamos a matriz $J_1 \in \mathbb{R}^{n_1 \times n_0}$ pelo vetor $\mathbf{v} \in \mathbb{R}^{n_0}$, obtendo um novo vetor $\dot{\mathbf{x}}_1 \in \mathbb{R}^{n_1}$;
+2. Multiplicamos a matriz $J_2 \in \mathbb{R}^{n_2 \times n_1}$ pelo vetor $\dot{\mathbf{x}}_1$, gerando outro vetor $\dot{\mathbf{x}}_2 \in \mathbb{R}^{n_2}$;
+3. Em nenhum momento realizamos uma multiplicação cara de Matriz $\times$ Matriz: cada etapa é um produto **Matriz $\times$ Vetor**, conhecido na literatura como **JVP (*Jacobian-Vector Product*)**.
+
+As variáveis $\dot{\mathbf{x}}_i := \frac{\partial \mathbf{x}_i}{\partial \mathbf{x}_0} \mathbf{v}$ representam a **derivada direcional** de cada estado intermediário na direção da perturbação de entrada $\mathbf{v}$. Elas fluem **para a frente**, simultaneamente à passagem direta dos dados!
+
+### Execução Passo a Passo do Modo Forward no DAG Canônico
+
+Para entender concretamente como o modo forward opera sem matrizes abstratas, apliquemos o algoritmo exatamente sobre o grafo de variáveis intermediárias que construímos no Bloco 2:
+$$f(x) = \sqrt{x^2 + \exp(x^2)} + \cos(x^2 + \exp(x^2))$$
+
+No modo forward, cada nó $v$ calcula e propaga simultaneamente seu valor numérico **primal** e sua derivada direcional **tangente** $\dot{v} := \frac{\partial v}{\partial x} \dot{x}$.
+
+A regra de atualização direta para qualquer nó $v_i$ em um DAG é:
+$$\dot{v}_i = \sum_{v_p \in \text{Pais}(v_i)} \frac{\partial v_i}{\partial v_p} \, \dot{v}_p$$
+onde a soma percorre todos os **nós que alimentam** $v_i$ (seus pais imediatos).
+
+Acompanhe a propagação para a frente passo a passo a partir da semente $\dot{x} = 1$:
+
+1. **Semente de Entrada ($x$):**
+   Definimos a perturbação unitária $\dot{x} = 1$ (derivada de $x$ em relação a si mesmo).
+
+2. **Nó $a = x^2$:**
+   - *Primal:* $a = x^2$
+   - *Tangente:* $\dot{a} = \frac{\partial a}{\partial x} \dot{x} = 2x \cdot \dot{x} = 2x$
+
+3. **Nó $b = \exp(a)$:**
+   - *Primal:* $b = \exp(a) = \exp(x^2)$
+   - *Tangente:* $\dot{b} = \frac{\partial b}{\partial a} \dot{a} = \exp(a) \cdot \dot{a} = \exp(x^2) \cdot 2x$
+
+4. **Nó $c = a + b$ (Junção de Múltiplos Pais):**
+   Aqui o nó $c$ recebe duas variáveis de entrada ($a$ e $b$). Pela regra de propagação forward:
+   - *Primal:* $c = a + b = x^2 + \exp(x^2)$
+   - *Tangente:*
+     $$\dot{c} = \frac{\partial c}{\partial a} \dot{a} + \frac{\partial c}{\partial b} \dot{b} = 1 \cdot \dot{a} + 1 \cdot \dot{b} = 2x + 2x \exp(x^2) = 2x\big(1 + \exp(x^2)\big)$$
+
+5. **Nós $d = \sqrt{c}$ e $e = \cos(c)$:**
+   Ambos dependem apenas de $c$:
+   - *Primal de $d$:* $d = \sqrt{c}$
+   - *Tangente de $d$:* $\dot{d} = \frac{\partial d}{\partial c} \dot{c} = \frac{1}{2\sqrt{c}} \dot{c}$
+   - *Primal de $e$:* $e = \cos(c)$
+   - *Tangente de $e$:* $\dot{e} = \frac{\partial e}{\partial c} \dot{c} = -\sin(c) \dot{c}$
+
+6. **Nó Final de Saída $f = d + e$ (Junção Final):**
+   - *Primal:* $f = d + e = \sqrt{c} + \cos(c)$
+   - *Tangente:*
+     $$\dot{f} = \frac{\partial f}{\partial d} \dot{d} + \frac{\partial f}{\partial e} \dot{e} = 1 \cdot \dot{d} + 1 \cdot \dot{e} = \dot{d} + \dot{e} = \left(\frac{1}{2\sqrt{c}} - \sin(c)\right) \dot{c}$$
+
+Ao substituir $c$ e $\dot{c}$, obtemos exatamente a derivada clássica $\frac{\mathrm{d}f}{\mathrm{d}x}$!
+
+::: {.callout-note icon=false}
+## Dualidade Notável: Onde Acontecem as Somas?
+Compare com atenção o comportamento topológico dos dois modos:
+- **Modo Forward:** A acumulação por soma ocorre nas **convergências de entradas** (nós que possuem múltiplos *pais*, como $c = a + b$ e $f = d + e$):
+  $$\dot{v}_i = \sum_{v_p \in \text{Pais}(v_i)} \frac{\partial v_i}{\partial v_p} \dot{v}_p$$
+- **Modo Reverse:** A acumulação por soma ocorre nas **bifurcações de saídas** (nós cujos valores são lidos por múltiplos *filhos*, como $c \to d, e$ e $a \to b, c$):
+  $$\bar{v}_i = \sum_{v_j \in \text{Filhos}(v_i)} \bar{v}_j \frac{\partial v_j}{\partial v_i}$$
+:::
+
+::: {.callout-tip}
+## Vantagem de Memória do Modo Forward
+No modo forward, como o par $(\text{primal}, \text{tangente}) = (v_i, \dot{v}_i)$ é calculado de maneira estritamente síncrona junto com o fluxo de execução, **não é necessário registrar o grafo em memória (fita/tape)** nem preservar valores intermediários antigos. Assim que $c$ e $\dot{c}$ são calculados, as variáveis $a, b, \dot{a}, \dot{b}$ podem ser descartadas da RAM. A complexidade de memória é $\mathcal{O}(1)$ ou proporcional apenas à profundidade da pilha!
+:::
+
+::: {.callout-warning}
+## Custo do Modo Forward em Altas Dimensões
+Cada passagem direta do modo forward avalia a projeção de $J$ sobre **uma única direção de entrada $\mathbf{v}$**. Para obter a matriz Jacobiana completa $J \in \mathbb{R}^{m \times n}$, precisamos semear o algoritmo com os $n$ vetores da base canônica $\mathbf{e}_1, \dots, \mathbf{e}_n$, exigindo **$n$ passagens completas para frente**:
+$$\text{Custo do Modo Forward} = \mathcal{O}(d_{\text{in}} \cdot C_{\text{eval}})$$
+onde $C_{\text{eval}}$ é o custo de uma única passagem direta. Se a rede possuir 1 milhão de parâmetros ($d_{\text{in}} = 10^6$), o modo forward exigirá 1 milhão de avaliações completas da rede!
+:::
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Modo Forward (Tangente / Pushforward / JVP)
+
+- **Parentização à Direita:**
+  $$J \cdot \mathbf{v} = J_K \Big( \dots \big( J_2 ( J_1 \mathbf{v} ) \big) \Big)$$
+- **Operação Atômica:** Produto **Matriz $\times$ Vetor** (*Jacobian-Vector Product* - JVP).
+- **Semântica:** Propaga perturbações direcionais $\dot{\mathbf{x}}_i$ para frente, junto com o fluxo de dados.
+- **Complexidade:** Cada passagem obtém 1 coluna da Jacobiana:
+  $$\text{Custo Total} = \mathcal{O}(d_{\text{in}} \cdot C_{\text{eval}})$$
+  *(exige $d_{\text{in}}$ passagens diretas completas pelo grafo)*
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Modo Forward no Grafo Canônico
+
+Semente de entrada: $\dot{x} = 1$. Regra direta: $\dot{v}_i = \sum_{p \in \text{Pais}(v_i)} \frac{\partial v_i}{\partial p} \dot{p}$.
+
+| Nó | Primal | Tangente ($\dot{v}$) |
+|:---|:---|:---|
+| $a = x^2$ | $a = x^2$ | $\dot{a} = 2x \cdot \dot{x} = 2x$ |
+| $b = \exp(a)$ | $b = \exp(a)$ | $\dot{b} = \exp(a) \cdot \dot{a} = 2x \exp(x^2)$ |
+| **$c = a + b$** | $c = a + b$ | **$\dot{c} = 1\cdot\dot{a} + 1\cdot\dot{b} = 2x(1 + \exp(x^2))$** |
+| $d = \sqrt{c}$ | $d = \sqrt{c}$ | $\dot{d} = \frac{1}{2\sqrt{c}} \dot{c}$ |
+| $e = \cos(c)$ | $e = \cos(c)$ | $\dot{e} = -\sin(c) \dot{c}$ |
+| **$f = d + e$** | $f = d + e$ | **$\dot{f} = \dot{d} + \dot{e} = (\frac{1}{2\sqrt{c}} - \sin(c))\dot{c} = \frac{\mathrm{d}f}{\mathrm{d}x}$** |
+
+::: {.callout-note icon=false}
+## Dualidade Topológica e Memória
+- **Forward:** Acumula soma nas **convergências de entradas** (pais de $c$ e $f$).
+- **Reverse:** Acumula soma nas **bifurcações de saídas** (filhos de $c$ e $a$).
+- **Memória:** Avaliação online $\mathcal{O}(1)$ sem necessidade de fita (*tape*).
+:::
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## O Modo Reverse: Co-vetores e Produtos Vetor-Jacobiana (VJP)
+
+No **Modo Reverse** (também denominado modo adjunto, *pullback* ou backpropagation generalizado), agrupamos os parênteses da **esquerda para a direita**:
+$$\mathbf{u}^T \cdot J = \Big( \dots \Big( \big( \mathbf{u}^T J_K \big) J_{K-1} \Big) \dots \Big) J_1$$
+onde $\mathbf{u} \in \mathbb{R}^{n_K}$ é um vetor de sensibilidade inicial na saída.
+
+A mecânica agora inverte-se:
+1. Multiplicamos o vetor-linha $\mathbf{u}^T \in \mathbb{R}^{1 \times n_K}$ pela matriz $J_K \in \mathbb{R}^{n_K \times n_{K-1}}$, resultando em um novo vetor-linha $\bar{\mathbf{x}}_{K-1}^T \in \mathbb{R}^{1 \times n_{K-1}}$;
+2. Multiplicamos esse vetor-linha pela matriz anterior $J_{K-1}$, produzindo $\bar{\mathbf{x}}_{K-2}^T$;
+3. Cada etapa intermediária é um produto **Vetor $\times$ Matriz**, conhecido como **VJP (*Vector-Jacobian Product*)**.
+
+As variáveis $\bar{\mathbf{x}}_i := \Big(\frac{\partial \mathbf{x}_K}{\partial \mathbf{x}_i}\Big)^T \mathbf{u}$ são chamadas de **adjuntos ou co-vetores**. Elas propagam o sinal de sensibilidade **para trás**, na direção contrária ao fluxo de dados!
+
+::: {.callout-important}
+## O Milagre do Modo Reverse em Machine Learning
+Em Machine Learning supervisionado, a função de perda $\mathcal{L}$ é um escalar ($d_{\text{out}} = n_K = 1$).
+Ao escolher a semente escalar trivial $u = 1$ ($\frac{\partial \mathcal{L}}{\partial \mathcal{L}} = 1$), uma **única passagem reversa** propaga os co-vetores por toda a cadeia, retornando simultaneamente o gradiente completo de todos os milhões ou bilhões de parâmetros de entrada:
+$$\text{Custo do Modo Reverse} = \mathcal{O}(d_{\text{out}} \cdot C_{\text{eval}}) = \mathcal{O}(1 \cdot C_{\text{eval}})$$
+O custo independe inteiramente do número de parâmetros de entrada $d_{\text{in}}$!
+:::
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Modo Reverse (Adjunto / Pullback / VJP)
+
+- **Parentização à Esquerda:**
+  $$\mathbf{u}^T \cdot J = \Big( \big( ( \mathbf{u}^T J_K ) J_{K-1} \big) \dots \Big) J_1$$
+- **Operação Atômica:** Produto **Vetor $\times$ Matriz** (*Vector-Jacobian Product* - VJP).
+- **Semântica:** Propaga sensibilidades $\bar{\mathbf{x}}_i$ para trás, no sentido inverso aos dados.
+- **Complexidade:** Cada passagem obtém 1 linha da Jacobiana:
+  $$\text{Custo Total} = \mathcal{O}(d_{\text{out}} \cdot C_{\text{eval}})$$
+- **Em ML ($\mathcal{L} \in \mathbb{R}$):** $d_{\text{out}} = 1 \implies$ **Uma única passagem reversa computa todos os gradientes com custo $\mathcal{O}(C_{\text{eval}})$!**
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## O Teorema de Baur-Strassen / Speelpenning (1983)
+
+Essa assimetria assombrosa entre os modos forward e reverse é consagrada por um dos teoremas mais célebres da Ciência da Computação teórica:
+
+::: {.callout-note icon=false}
+## Teorema (Baur-Strassen / Speelpenning, 1983)
+Seja $f: \mathbb{R}^n \to \mathbb{R}$ uma função escalar calculável por um circuito aritmético de comprimento $L$ utilizando as operações $\{+, -, \times, /\}$ e funções univariadas de custo unitário, em tempo total $C_{\text{eval}}$.
+
+Então, o vetor gradiente completo:
+$$\nabla f(\mathbf{x}) = \left[ \frac{\partial f}{\partial x_1}, \frac{\partial f}{\partial x_2}, \dots, \frac{\partial f}{\partial x_n} \right]^T \in \mathbb{R}^n$$
+pode ser calculado no modo reverso em um tempo $C_{\text{grad}}$ que satisfaz rigorosamente:
+$$C_{\text{grad}} \le 5 \cdot C_{\text{eval}}$$
+**independentemente do número de variáveis de entrada $n$.**
+:::
+
+### De Onde Vem o Fator 5? A Intuição da Demonstração
+
+Por que a constante limitante superior é no máximo $5$, e não 50 ou 500?
+
+A demonstração clássica de Baur & Strassen (1983) e Griewank & Walther (2008) baseia-se em uma **contagem atômica de operações aritméticas** para cada nó do circuito:
+
+1. **Passagem Direta ($1 \cdot C_{\text{eval}}$):**
+   Avaliamos a função para a frente, calculando cada variável intermediária $v_i = \phi(v_j, v_k)$. Cada operação atômica consome $1$ unidade de custo. O custo total do forward pass é $C_{\text{forward}} = C_{\text{eval}} = L$ operações.
+
+2. **Passagem Reversa (no máximo $4 \cdot C_{\text{eval}}$):**
+   Na volta, para cada operação direta $v_i = \phi(v_j, v_k)$, precisamos retropropagar o sinal de sensibilidade $\bar{v}_i := \frac{\partial f}{\partial v_i}$ acumulando nos seus dois nós de entrada:
+   $$\bar{v}_j \mathrel{+}= \bar{v}_i \cdot \frac{\partial \phi}{\partial v_j}, \qquad \bar{v}_k \mathrel{+}= \bar{v}_i \cdot \frac{\partial \phi}{\partial v_k}$$
+   Analisemos o pior caso de uma operação bivariada, a **multiplicação** ($v_i = v_j \cdot v_k$):
+   - Derivadas locais: $\frac{\partial v_i}{\partial v_j} = v_k$ e $\frac{\partial v_i}{\partial v_k} = v_j$.
+   - Para atualizar $\bar{v}_j$: calculamos o produto $\bar{v}_i \cdot v_k$ (1 mult) e somamos em $\bar{v}_j$ (1 soma) $\to \mathbf{2}$ operações.
+   - Para atualizar $\bar{v}_k$: calculamos o produto $\bar{v}_i \cdot v_j$ (1 mult) e somamos em $\bar{v}_k$ (1 soma) $\to \mathbf{2}$ operações.
+   - **Total no backward por nó:** $2 + 2 = \mathbf{4}$ operações aritméticas elementares para desfazer cada multiplicação direta!
+   - *(Para adições $v_i = v_j + v_k$, o custo é ainda menor: como as derivadas locais valem $1$, gastamos apenas $2$ somas no backward).*
+
+3. **Custo Combinado Total do Gradiente:**
+   Como o modo reverso executa a passagem direta para armazenar os valores intermediários e em seguida executa a passagem reversa:
+   $$C_{\text{grad}} = C_{\text{forward}} + C_{\text{backward}} \le C_{\text{eval}} + 4 \cdot C_{\text{eval}} = 5 \cdot C_{\text{eval}}$$
+
+Essa contagem desmistifica o teorema: cada operação direta gera no retorno no máximo duas multiplicações e duas somas para transferir os erros aos operandos!
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Teorema de Baur-Strassen (1983)
+
+::: {.callout-note icon=false}
+## Teorema de Baur-Strassen / Speelpenning
+Para qualquer função escalar $f: \mathbb{R}^n \to \mathbb{R}$ computável em tempo $C_{\text{eval}}$ (passagem direta):
+$$C_{\text{grad}} \le 5 \cdot C_{\text{eval}}$$
+**independentemente do número de parâmetros $n$.**
 :::
 
 ::: {.fragment}
-## Gradientes dos Parâmetros:
-- **Vieses:** $\nabla_{\mathbf{b}^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)} \in \mathbb{R}^{d_l}$.
-- **Pesos:** $\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T \in \mathbb{R}^{d_l \times d_{l-1}}$.
+- Obter o gradiente de **100 bilhões de parâmetros** custa no máximo $5\times$ o custo $C_{\text{eval}}$ de avaliar a rede para frente uma única vez.
+- Se usássemos modo forward ou diferenças finitas para 100 bilhões de parâmetros, o treinamento exigiria 100 bilhões de passagens diretas.
 :::
 
-::: {.fragment .callout-tip}
-## Estrutura Algébrica
-O gradiente de cada peso é o produto simples de **quão errado o neurônio de destino estava** ($\delta_i$) por **quão ativo o neurônio de origem estava** ($a_j$).
+## De Onde Vem o Fator 5 em Baur-Strassen?
+
+::: {.callout-tip icon=false}
+## Intuição Algébrica: Contagem de Operações por Nó
+O custo total é a soma do **Forward Pass** ($1 \cdot C_{\text{eval}}$) com o **Backward Pass** ($\le 4 \cdot C_{\text{eval}}$).
+:::
+
+::: {.columns}
+::: {.column width="50%"}
+### Na Passagem Direta (1 op)
+Para uma multiplicação $v_i = v_j \cdot v_k$:
+- Custo no forward: **1 operação** ($\times$).
+:::
+
+::: {.column width="50%"}
+### Na Passagem Reversa ($\le 4$ ops)
+Atualizar os pais $\bar{v}_j$ e $\bar{v}_k$:
+- $\bar{v}_j \mathrel{+}= \bar{v}_i \cdot v_k$ (1 mult + 1 soma = **2 ops**)
+- $\bar{v}_k \mathrel{+}= \bar{v}_i \cdot v_j$ (1 mult + 1 soma = **2 ops**)
+- Custo no backward: **$2 + 2 = 4$ operações**.
 :::
 :::
 
-## Pausa Ativa 4: A Dinâmica da Retropropagação Algébrica
+::: {.fragment .callout-note icon=false}
+## Total: $C_{\text{forward}} + C_{\text{backward}} \le 1 + 4 = 5$
+$$C_{\text{grad}} \le C_{\text{eval}} + 4 \cdot C_{\text{eval}} = 5 \cdot C_{\text{eval}}$$
+Cada nó visitado no retorno faz no máximo 2 produtos e 2 somas para atualizar os erros de seus pais!
+:::
+:::
+
+::: {.fig-resize style="width: 80%; margin: 0 auto;"}
+```{python}
+#| echo: false
+#| fig-align: center
+
+fig, ax = plt.subplots(figsize=(8, 3.8))
+ax.plot(dims, time_forward, marker="o", color=COR_B, lw=2.2, label=r"Modo Forward: $\mathcal{O}(d \cdot C_{\mathrm{eval}})$")
+ax.plot(dims, time_reverse, marker="s", color=COR_A, lw=2.5, ls="--", label=r"Modo Reverse: $\leq 5 \cdot C_{\mathrm{eval}}$ (Baur-Strassen)")
+
+ax.set_xscale("log")
+ax.set_yscale("log")
+ax.set_xlabel("Número de Parâmetros de Entrada ($d$)", fontsize=11)
+ax.set_ylabel("Custo em Múltiplos de $C_{\mathrm{eval}}$", fontsize=11)
+ax.set_title("Escalabilidade Assintótica: Forward vs. Reverse Autodiff", fontsize=12, fontweight="bold")
+ax.legend(frameon=True)
+ax.grid(True, which="both", ls="--", alpha=0.4)
+
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## Critérios de Decisão em Machine Learning e o Trade-Off de Memória
+
+Compreendida a teoria da associatividade, como decidir qual modo utilizar em problemas práticos?
+
+| Critério | Modo Forward (Tangente / JVP) | Modo Reverse (Adjunto / VJP) |
+| :--- | :--- | :--- |
+| **Dimensões Favoráveis** | $d_{\text{in}} \ll d_{\text{out}}$ (poucas entradas, muitas saídas) | $d_{\text{in}} \gg d_{\text{out}}$ (muitas entradas, poucas saídas) |
+| **Aplicações Típicas** | Modelos generativos com espaço latente pequeno ($z \in \mathbb{R}^{10} \to y \in \mathbb{R}^{10^6}$); cinemática e robótica; derivadas temporais em EDOs neurais. | **Treinamento de Redes Neurais e LLMs** (perda escalar $\mathcal{L} \in \mathbb{R}$ com milhões de pesos $W$); sensibilidade paramétrica. |
+| **Operação Central** | Produto Jacobiana-Vetor ($J \mathbf{v}$) | Produto Vetor-Jacobiana ($\mathbf{u}^T J$) |
+| **Consumo de Memória** | **$\mathcal{O}(1)$ na profundidade:** valores intermediários podem ser descartados imediatamente após o uso. | **$\mathcal{O}(L)$ na profundidade:** exige congelar todas as ativações intermediárias na fita (*tape*) para a passagem reversa. |
+
+: Matriz de Decisão: Modo Forward vs. Modo Reverse {.striped .hover}
+
+### O Custo Oculto da Memória no Modo Reverso
+
+Se o Teorema de Baur-Strassen garante que o tempo do modo reverso é linear e barato, qual é a contrapartida?
+
+**A contrapartida é o consumo de memória!**
+
+- No modo forward, as perturbações $\dot{x}$ caminham junto com os dados. Logo que um nó termina de calcular seus filhos, seu valor pode ser **imediatamente desalocado da memória RAM/VRAM**. O consumo de memória é constante em relação ao número de camadas ($\mathcal{O}(1)$).
+- No modo reverso, para calcular a derivada local $\frac{\partial x_j}{\partial x_i}$ na volta (por exemplo, a derivada da multiplicação $\frac{\partial (xy)}{\partial x} = y$ ou da ativação $\sigma'(z) = \sigma(z)(1-\sigma(z))$), o sistema **precisa conhecer os valores numéricos exatos assumidos na passagem direta**.
+- Portanto, o modo reverso é obrigado a **reter na VRAM da GPU todas as ativações intermediárias de todas as camadas** até que o sinal reverso passe por elas. Para redes gigantescas com centenas de camadas (Transformers/LLMs), essa fita de ativações consome muito mais memória do que os próprios parâmetros do modelo, sendo a causa primária dos temidos erros de *Out Of Memory* (OOM).
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Critérios de Decisão: Forward vs. Reverse
+
+::: {.columns}
+::: {.column width="50%"}
+#### Quando usar Forward?
+- **Condição:** $d_{\text{in}} \ll d_{\text{out}}$
+- **Exemplo:** Modelo generativo ($z \in \mathbb{R}^{10} \to y \in \mathbb{R}^{10^6}$).
+- **Vantagem de Memória:** $\mathcal{O}(1)$ — descarta valores logo após usá-los.
+:::
+::: {.column width="50%"}
+#### Quando usar Reverse?
+- **Condição:** $d_{\text{in}} \gg d_{\text{out}}$
+- **Exemplo:** Treinamento de Redes Neurais ($\mathcal{L} \in \mathbb{R}$ com milhões de pesos).
+- **Custo de Memória:** $\mathcal{O}(L)$ — congela todas as ativações intermediárias na VRAM.
+:::
+:::
+
+::: {.fragment .callout-note icon=false}
+## Síntese Unificadora
+O algoritmo clássico de **Backpropagation** deduzido no Bloco 1 nada mais é do que o **Modo Reverse de Diferenciação Automática** aplicado à topologia específica de uma rede neural estruturada em camadas!
+:::
+:::
+
+## Pausa Ativa 4 — Modos Forward vs. Reverse
 
 ::: {.callout-tip}
 ## Pergunta Aberta
-O que acontece com o vetor de sensibilidade $\boldsymbol{\delta}^{(l)}$ se as ativações da camada $\mathbf{z}^{(l)}$ estiverem em uma região onde a função logística satura ($\sigma(z) \approx 1$ ou $\sigma(z) \approx 0$)? Como isso afeta o treinamento das camadas iniciais de uma rede profunda?
-
-*Dica para discussão:* Analise o valor numérico de $\sigma'(z) = \sigma(z)(1 - \sigma(z))$ quando $|z| \gg 1$ e seu efeito multiplicativo na equação recursiva de $\boldsymbol{\delta}^{(l)}$.
+Imagine que você está projetando o sistema de controle de um braço robótico que recebe 3 ângulos de junta motora $\boldsymbol{\theta} \in \mathbb{R}^3$ e calcula a trajetória espacial de 50 pontos da estrutura $\mathbf{p} \in \mathbb{R}^{150}$. Você precisa da matriz Jacobiana completa $\frac{\partial \mathbf{p}}{\partial \boldsymbol{\theta}} \in \mathbb{R}^{150 \times 3}$ a cada ciclo de controle de 1 milissegundo. Qual modo de autodiff você deve adotar e por quantas passagens pelo grafo?
 :::
 
 ::: {.callout-tip}
-## Julgamento de Verdadeiro ou Falso
+## Comparação entre os Modos de Autodiff
 Julgue V ou F — a questão só conta se acertar os 4 itens:
 
-- □ O gradiente da perda em relação à matriz de pesos $W^{(l)}$ possui posto no máximo 1 para uma única amostra de treinamento $\mathbf{x}$.
-- □ A retropropagação do erro através da matriz transposta $(W^{(l+1)})^T$ preserva a norma do vetor de sensibilidade se e somente se todos os autovalores de $W^{(l+1)}$ forem unitários.
-- □ A função de ativação ReLU ($\text{ReLU}(z) = \max\{0, z\}$) possui derivada igual a 1 para $z > 0$, prevenindo o desvanecimento do gradiente nas regiões ativas.
-- □ O gradiente do viés $\mathbf{b}^{(l)}$ depende explicitamente das ativações da camada anterior $\mathbf{a}^{(l-1)}$.
+- □ Ambos os modos Forward e Reverse produzem exatamente a mesma matriz Jacobiana numérica, decorrendo da propriedade de associatividade da multiplicação matricial $(AB)C = A(BC)$.
+- □ O modo forward requer menos memória de execução que o modo reverso, pois pode descartar variáveis intermediárias da memória assim que seus nós dependentes imediatos forem avaliados.
+- □ Para treinar uma rede neural profunda com 1 milhão de pesos e função de perda escalar, o modo forward e o modo reverso demandam assintoticamente o mesmo número de operações de ponto flutuante.
+- □ O Teorema de Baur-Strassen garante que, para qualquer função escalar, o vetor gradiente completo pode ser calculado em no máximo cerca de 5 vezes o tempo de uma única passagem direta.
 :::
 
 ::: {.content-visible when-format="revealjs"}
 ## Pausa Ativa 4 — Resposta
 
 ::: {.callout-tip}
-## Julgamento de V/F — Resposta
-- ✔ **V:** É o produto externo de dois vetores $\boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T$, cuja imagem é unidimensional ($\text{rk} = 1$).
-- ✗ **F:** Preservação de norma em matrizes retangulares exige que os valores singulares sejam iguais a 1 (isometria linear), não autovalores.
-- ✔ **V:** Como $\sigma'(z) = 1$ para $z > 0$, a comporta de sensibilidade não atrofia o sinal retrógrado por multiplicação fracionária repetida.
-- ✗ **F:** O gradiente do viés é exatamente $\boldsymbol{\delta}^{(l)}$, independente de $\mathbf{a}^{(l-1)}$.
+## Comparação entre os Modos de Autodiff — Resposta
+- ✔ **Verdadeiro:** A associatividade garante a identidade algébrica exata das expressões.
+- ✔ **Verdadeiro:** O modo forward descarta valores imediatamente; o modo reverso congela ativações até o retorno.
+- ✗ **Falso:** O modo forward exigiria 1 milhão de passagens pela rede; o modo reverso obtém todos os gradientes em um único passe!
+- ✔ **Verdadeiro:** O limitante superior $5 C_{\text{eval}}$ é uma garantia teórica universal para funções escalares.
 :::
 
 ::: {.fragment}
-**Voltando à pergunta:** Quando $\sigma(z)$ satura, $\sigma'(z) = \sigma(z)(1 - \sigma(z)) \to 0$. Como a equação de retropropagação multiplica sucessivamente essas derivadas a cada camada retrocedida, o sinal de sensibilidade decresce exponencialmente: $\boldsymbol{\delta}^{(1)} \approx \mathbf{0}$. Esse é o clássico fenômeno do **desvanecimento do gradiente** (*vanishing gradient problem*), que motivou a adoção generalizada da ReLU em redes profundas.
-:::
-:::
-
-# Bloco 4: Validação Empírica no California Housing e Raio de Fidelidade de Taylor
-
-::: {.content-visible when-format="html" unless-format="revealjs"}
-## Implementação Numérica e Verificação de Gradiente
-
-Para validar empiricamente toda a teoria deduzida, construímos um Perceptron Multicamadas ($d_{\text{in}} = 4 \to d_{\text{hidden}} = 3 \to d_{\text{out}} = 1$) treinado sobre os atributos padronizados do California Housing (`MedInc`, `HouseAge`, `AveRooms`, `AveBedrms`).
-
-O primeiro imperativo de qualquer implementação técnica de cálculo multivariado é o **Gradient Checking**: comparar os gradientes analíticos derivados pela regra da cadeia com aproximações numéricas por diferenças finitas centrais:
-$$\frac{\partial \mathcal{L}}{\partial \theta_p} \approx \frac{\mathcal{L}(\boldsymbol{\theta} + \epsilon \mathbf{e}_p) - \mathcal{L}(\boldsymbol{\theta} - \epsilon \mathbf{e}_p)}{2\epsilon}$$
-
-No código executado nesta sessão com $\epsilon = 10^{-5}$, o erro relativo obtido foi:
-$$\text{Erro Relativo} = \frac{\|\nabla_{\text{analítico}} - \nabla_{\text{numérico}}\|_2}{\|\nabla_{\text{analítico}}\|_2 + \|\nabla_{\text{numérico}}\|_2} \approx 4{,}2 \cdot 10^{-10}$$
-Esse erro próximo da precisão de máquina ($10^{-16}$) confirma de forma incontestável a exatidão das equações matriciais derivadas no Bloco 3.
-
-### O Experimento de Taylor: Medindo o Raio de Fidelidade
-
-Agora, realizamos o experimento central de aproximação polinomial:
-1. Fixamos os pesos no ponto de operação $\boldsymbol{\theta}_0 \in \mathbb{R}^{19}$ (com perda $\mathcal{L}_0 \approx 2{,}49$).
-2. Escolhemos uma direção aleatória unitária $\mathbf{v} \in \mathbb{R}^{19}$ ($\|\mathbf{v}\|_2 = 1$).
-3. Para uma sequência de normas de perturbação $\eta \in [10^{-4}, 1.0]$, avaliamos o deslocamento $\mathbf{h} = \eta \mathbf{v}$ e calculamos:
-   - A variação exata da perda: $\Delta \mathcal{L}_{\text{exata}} = \mathcal{L}(\boldsymbol{\theta}_0 + \mathbf{h}) - \mathcal{L}(\boldsymbol{\theta}_0)$.
-   - A previsão linear de Taylor de 1ª ordem: $\Delta T_1 = \nabla \mathcal{L}(\boldsymbol{\theta}_0)^T \mathbf{h}$.
-   - A previsão quadrática de Taylor de 2ª ordem: $\Delta T_2 = \nabla \mathcal{L}(\boldsymbol{\theta}_0)^T \mathbf{h} + \frac{1}{2} \mathbf{h}^T \nabla^2 \mathcal{L}(\boldsymbol{\theta}_0) \mathbf{h}$.
-:::
-
-::: {.content-visible when-format="revealjs"}
-## Verificação Numérica e Experimento de Taylor
-
-::: {.callout-note}
-## Gradient Checking no California Housing
-- **Diferença Finita Central:** $\epsilon = 10^{-5}$.
-- **Erro Relativo:** $\frac{\|\nabla_{\text{analítico}} - \nabla_{\text{numérico}}\|}{\|\nabla_{\text{analítico}}\| + \|\nabla_{\text{numérico}}\|} < 10^{-9}$.
-- Confirmação formal da regra da cadeia matricial!
-:::
-
-::: {.fragment}
-## O Experimento de Taylor
-Avaliamos o erro das previsões de Taylor ao variar a magnitude da perturbação nos pesos $\|\mathbf{h}\|$ de $10^{-4}$ a $1{,}0$:
-- Erro Linear: $| \Delta \mathcal{L} - \Delta T_1 |$.
-- Erro Quadrático: $| \Delta \mathcal{L} - \Delta T_2 |$.
-:::
-:::
-
-```{python}
-#| echo: false
-#| fig-align: center
-
-# =====================================================================
-# Experimento de Taylor no California Housing: Variando ||h||
-# =====================================================================
-etas = np.logspace(-4, 0.2, 50)
-err_T1 = []
-err_T2 = []
-delta_L_real = []
-delta_T1_vals = []
-delta_T2_vals = []
-
-for eta in etas:
-    h = eta * h_dir
-    L_pert = loss_at_theta(theta_0 + h)
-    dL = L_pert - L_0
-    
-    dT1 = np.dot(grad_theta, h)
-    dT2 = dT1 + 0.5 * (eta**2) * h_curv_dir
-    
-    delta_L_real.append(dL)
-    delta_T1_vals.append(dT1)
-    delta_T2_vals.append(dT2)
-    
-    err_T1.append(np.abs(dL - dT1))
-    err_T2.append(np.abs(dL - dT2))
-
-fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
-
-# Subplot 1: Comparação direta das trajetórias de Taylor
-axes[0].plot(etas, delta_L_real, label=r"$\Delta \mathcal{L}$ Exata (MLP)", color=COR_A, lw=2.5)
-axes[0].plot(etas, delta_T1_vals, label=r"$T_1$ (Linear)", color=COR_B, lw=2, ls="--")
-axes[0].plot(etas, delta_T2_vals, label=r"$T_2$ (Quadrática)", color=COR_VERDE, lw=2, ls=":")
-axes[0].set_xlabel(r"Magnitude da Perturbação $\|\mathbf{h}\|$", fontsize=11)
-axes[0].set_ylabel(r"Variação da Perda $\Delta \mathcal{L}$", fontsize=11)
-axes[0].set_title("Fidelidade das Expansões de Taylor no MLP", fontsize=12, fontweight="bold")
-axes[0].legend(frameon=True)
-axes[0].set_xlim(0, 1.2)
-
-# Subplot 2: Escala Log-Log dos Erros de Aproximação (Inclinação 2 vs Inclinação 3)
-axes[1].loglog(etas, err_T1, label=r"Erro Linear $|R_1(\mathbf{h})| \sim \|\mathbf{h}\|^2$", color=COR_B, lw=2.2)
-axes[1].loglog(etas, err_T2, label=r"Erro Quadrático $|R_2(\mathbf{h})| \sim \|\mathbf{h}\|^3$", color=COR_VERDE, lw=2.2)
-axes[1].set_xlabel(r"Magnitude da Perturbação $\|\mathbf{h}\|$ (escala log)", fontsize=11)
-axes[1].set_ylabel("Erro Absoluto de Aproximação (escala log)", fontsize=11)
-axes[1].set_title(r"Taxa Assintótica de Resto: $\mathcal{O}(\|\mathbf{h}\|^2)$ vs $\mathcal{O}(\|\mathbf{h}\|^3)$", fontsize=12, fontweight="bold")
-axes[1].legend(frameon=True)
-axes[1].grid(True, which="both", ls="--", alpha=0.5)
-
-plt.tight_layout()
-plt.show()
-```
-
-::: {.content-visible when-format="html" unless-format="revealjs"}
-### Análise Crítica dos Resultados Visuais
-
-A figura acima sintetiza visualmente as propriedades teóricas deduzidas nesta aula:
-1. **Painel Esquerdo (Fidelidade no Espaço Original):**
-   - Para perturbações muito pequenas ($\|\mathbf{h}\| \le 0{,}1$), tanto o modelo linear ($T_1$) quanto o quadrático ($T_2$) coincidem perfeitamente com a perda real do MLP.
-   - À medida que $\|\mathbf{h}\|$ cresce além de $0{,}3$, a curva linear tangencial diverge drasticamente da realidade não-linear, prevendo que a perda continuaria caindo linearmente quando na verdade a saturação não-linear encurva a superfície para cima.
-   - O modelo quadrático osculador ($T_2$) sustenta uma fidelidade excelente até $\|\mathbf{h}\| \approx 0{,}6$, demonstrando concretamente o poder da matriz Hessiana em antecipar a curvatura da paisagem.
-2. **Painel Direito (Confirmação da Taxa de Resto em Log-Log):**
-   - Em escala logarítmica dupla, a curva de erro do modelo linear exibe inclinação exatamente igual a $2$, comprovando a cota teórica $|R_1(\mathbf{h})| \le \frac{L}{2}\|\mathbf{h}\|^2$.
-   - A curva de erro do modelo de segunda ordem exibe inclinação $3$, comprovando a cota assintótica do resto $|R_2(\mathbf{h})| \le \frac{M}{6}\|\mathbf{h}\|^3$.
-:::
-
-::: {.content-visible when-format="revealjs"}
-## Diagnóstico Empírico das Expansões de Taylor
-
-::: {.callout-note}
-## O Que o Gráfico nos Mostra?
-- **Zona Segura ($\|\mathbf{h}\| < 0{,}1$):** O modelo linear e o quadrático são indistinguíveis da perda verdadeira.
-- **Rompimento Linear ($\|\mathbf{h}\| > 0{,}3$):** A reta tangente passa reto pela dobra da montanha. O Gradient Descent com passo excessivo comete erros graves de extrapolação.
-- **Zona Quadrática Estendida ($\|\mathbf{h}\| < 0{,}6$):** A Hessiana rastreia a curvatura da tigela por um raio significativamente maior.
-:::
-
-::: {.fragment}
-## Confirmação Numérica das Ordens de Resto:
-- Em escala log-log, o erro de $T_1$ decai com inclinação **2** ($\mathcal{O}(\|\mathbf{h}\|^2)$).
-- O erro de $T_2$ decai com inclinação **3** ($\mathcal{O}(\|\mathbf{h}\|^3)$).
-:::
-:::
-
-## Pausa Ativa 5: O Alcance dos Modelos Locais
-
-::: {.callout-tip}
-## Pergunta Aberta
-Se o modelo quadrático $T_2$ prevê a perda com tanta precisão para passos maiores do que $T_1$, por que na prática de Deep Learning ainda realizamos centenas de milhares de passos minúsculos de primeira ordem ($\alpha \sim 10^{-3}$) em vez de passos largos de segunda ordem?
-
-*Dica para discussão:* Além do custo de calcular a Hessiana, reflita sobre o que acontece com a convexidade local: a Hessiana de um MLP é sempre positiva definida em todos os pontos do espaço?
-:::
-
-::: {.callout-tip}
-## Julgamento de Verdadeiro ou Falso
-Julgue V ou F — a questão só conta se acertar os 4 itens:
-
-- □ Em uma escala log-log de erro por norma de passo, a inclinação teórica da reta de erro da aproximação de Taylor de primeira ordem é 2.
-- □ A técnica de *Gradient Checking* compara a derivada analítica com a diferença finita progressiva simples $\frac{f(x+\epsilon)-f(x)}{\epsilon}$, que possui erro de truncamento de ordem $\mathcal{O}(\epsilon^2)$.
-- □ Para perturbações suficientemente grandes no espaço de pesos de um MLP, a aproximação linear de Taylor pode prever perdas negativas mesmo quando a perda real é estritamente positiva.
-- □ A curvatura direcional de uma função na direção do vetor unitário $\mathbf{v}$ é dada pela forma quadrática $\mathbf{v}^T \nabla^2 f(\mathbf{x}_0) \mathbf{v}$.
-:::
-
-::: {.content-visible when-format="revealjs"}
-## Pausa Ativa 5 — Resposta
-
-::: {.callout-tip}
-## Julgamento de V/F — Resposta
-- ✔ **V:** Como $|R_1(\mathbf{h})| \le C \|\mathbf{h}\|^2$, temos $\log |R_1| \approx 2 \log \|\mathbf{h}\| + \text{const}$ (inclinação 2).
-- ✗ **F:** A diferença finita progressiva simples possui erro $\mathcal{O}(\epsilon)$; a diferença finita **central** $\frac{f(x+\epsilon)-f(x-\epsilon)}{2\epsilon}$ é que atinge $\mathcal{O}(\epsilon^2)$.
-- ✔ **V:** Como $T_1$ é um hiperplano ilimitado inferiormente, para $\mathbf{h} = -c \nabla \mathcal{L}$ com $c$ grande, $T_1 \to -\infty$, violando a não-negatividade da perda.
-- ✔ **V:** É a definição formal da segunda derivada direcional $D_{\mathbf{v}}^2 f(\mathbf{x}_0)$.
-:::
-
-::: {.fragment}
-**Voltando à pergunta:** Existem duas razões capitais:
-1. **Custo Computacional:** A Hessiana tem $19 \times 19$ em nosso mini-exemplo, mas em um modelo moderno com $10^9$ parâmetros ela possui $10^{18}$ elementos, impossível de armazenar ou inverter.
-2. **Indefinitude da Hessiana:** Em redes neurais, a perda é não-convexa e a Hessiana frequentemente possui autovalores negativos (pontos de sela). Minimizar $T_2$ quando $H$ tem autovalores negativos empurraria o algoritmo na direção de máxima subida ou divergência!
+**Voltando à pergunta:** Como $d_{\text{in}} = 3$ e $d_{\text{out}} = 150$, a dimensão de entrada é muito menor que a de saída ($d_{\text{in}} \ll d_{\text{out}}$). O **Modo Forward** é a escolha ideal, exigindo apenas **3 passagens** pelo grafo (uma para cada junta), com consumo mínimo de memória e sem necessidade de armazenar fita de execução. O modo reverso exigiria 150 passagens!
 :::
 :::
 
 # Fechamento
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## Retomando as Cinco Perguntas Fundamentais
+## Retomando as Quatro Perguntas
 
-1. **O que é o Teorema de Taylor Multivariado e como quantificar o erro das aproximações locais de 1ª e 2ª ordens?**
-   É a expansão polinomial de uma função suave multivariada em torno de um ponto de operação $\mathbf{x}_0$. A aproximação de 1ª ordem $T_1(\mathbf{x}_0+\mathbf{h}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T\mathbf{h}$ possui erro limitado por $\frac{L}{2}\|\mathbf{h}\|^2$ sob gradiente $L$-Lipschitziano. A aproximação de 2ª ordem $T_2(\mathbf{x}_0+\mathbf{h}) = T_1 + \frac{1}{2}\mathbf{h}^T \nabla^2 f(\mathbf{x}_0)\mathbf{h}$ incorpora a curvatura e possui erro limitado por $\frac{M}{6}\|\mathbf{h}\|^3$ sob Hessiana $M$-Lipschitziana.
-2. **Qual é a conexão matemática formal entre a aproximação de Taylor e o passo de Gradient Descent?**
-   O passo de Gradient Descent $\mathbf{h}^\star = -\alpha \nabla f(\mathbf{x}_0)$ é a solução exata e única do problema de minimização da aproximação linear de Taylor sob uma penalidade proximal de confiança quadrática: $\min_{\mathbf{h}} [f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2\alpha}\|\mathbf{h}\|_2^2]$. O *learning rate* $\alpha$ é o inverso do coeficiente de desconfiança na extrapolação linear.
-3. **Como formular a Regra da Cadeia Multivariada matricialmente sob a convenção *denominator layout*?**
-   Para uma função intermediária $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$ e perda escalar $g: \mathbb{R}^m \to \mathbb{R}$, o gradiente é dado pelo produto matriz-vetor $\nabla_{\mathbf{x}} (g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$, onde $J_{\mathbf{f}} \in \mathbb{R}^{n \times m}$ possui as derivadas parciais nas colunas. Para composições gerais, os Jacobianos multiplicam-se diretamente: $J_{\mathbf{g} \circ \mathbf{f}} = J_{\mathbf{f}} J_{\mathbf{g}}$.
-4. **Como deduzir analiticamente a propagação retrógrada de gradientes (*backpropagation*) em uma rede neural multicamadas (MLP)?**
-   Define-se o vetor de sensibilidade pré-sináptica $\boldsymbol{\delta}^{(l)} = \nabla_{\mathbf{z}^{(l)}}\mathcal{L}$. Esse vetor retrocede através da recorrência $\boldsymbol{\delta}^{(l)} = ((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}) \odot \sigma'(\mathbf{z}^{(l)})$. A partir de $\boldsymbol{\delta}^{(l)}$, os gradientes dos parâmetros resultam em fórmulas matriciais fechadas: $\nabla_{\mathbf{b}^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)}$ e $\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)} (\mathbf{a}^{(l-1)})^T$ (produto externo erro $\times$ ativação).
-5. **Qual é o raio de fidelidade das aproximações lineares e quadráticas em um modelo neural real no California Housing?**
-   No California Housing com MLP de 2 camadas, o modelo linear permanece fiel apenas para perturbações muito pequenas ($\|\mathbf{h}\| < 0{,}1$), enquanto o modelo quadrático estende essa precisão até $\|\mathbf{h}\| \approx 0{,}6$. Em escala log-log, os erros decaem com inclinações estritas de 2 ($T_1$) e 3 ($T_2$), confirmando experimentalmente as previsões assintóticas dos restos de Lagrange.
+1. **Como a Regra da Cadeia explora o reuso de computações no Backpropagation analítico através das 3 equações canônicas?**
+   Através de equações de recorrência matricial que propagam o vetor de sensibilidade pré-sináptica $\boldsymbol{\delta}^{(l)} = ((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}) \odot \sigma'(\mathbf{z}^{(l)})$. Ao retroceder camada a camada, reaproveitamos o prefixo já computado, expressando os gradientes dos pesos como o produto diádico $\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T$.
+2. **Por que os paradigmas manual, numérico e simbólico falham em modelos profundos, e como a Diferenciação Automática resolve isso via DAGs e variáveis intermediárias?**
+   O cálculo manual é intransferível; o numérico sofre com instabilidade e cancelamento subtrativo em ponto flutuante; e o simbólico sofre inchaço exponencial de termos ($\mathcal{O}(2^d)$). A autodiff resolve isso avaliando numericamente a derivada exata em tempo de execução via catálogo pré-programado de primitivas atômicas sobre um DAG de variáveis intermediárias.
+3. **Como a regra da cadeia multivariada se propaga em grafos com bifurcações através da soma sobre múltiplos caminhos direcionados?**
+   Em nós que alimentam múltiplos destinos (bifurcações), a sensibilidade total é a soma das contribuições de todas as arestas de saída: $\bar{x}_i = \sum_{x_j \in \text{Filhos}(x_i)} \bar{x}_j \frac{\partial x_j}{\partial x_i}$. A regra da adição $z = x+y$ atua como um divisor idêntico de fluxo ($\bar{x}=\bar{z}, \bar{y}=\bar{z}$).
+4. **Qual a dualidade matemática entre os modos Forward e Reverse pela associatividade da regra da cadeia, e por que o Teorema de Baur-Strassen torna o modo reverso o alicerce do Machine Learning?**
+   Ambos multiplicam as mesmas matrizes Jacobianas locais, mas associam à direita (JVP: matriz-vetor da entrada para a saída, custo $\mathcal{O}(d_{\text{in}} \cdot C_{\text{eval}})$) ou à esquerda (VJP: vetor-matriz da saída para a entrada, custo $\mathcal{O}(d_{\text{out}} \cdot C_{\text{eval}})$). Como a perda em ML é escalar ($d_{\text{out}} = 1$), o Teorema de Baur-Strassen garante que todos os gradientes são obtidos em tempo linear ($\le 5 C_{\text{eval}}$) em uma única passagem reversa.
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## Retomando as Cinco Perguntas Fundamentais
+## Retomando as Quatro Perguntas
 
-::: {.fragment}
-**1.** $T_1 = f + \nabla f^T\mathbf{h}$ possui erro $\mathcal{O}(\|\mathbf{h}\|^2)$; $T_2 = T_1 + \frac{1}{2}\mathbf{h}^T H \mathbf{h}$ possui erro $\mathcal{O}(\|\mathbf{h}\|^3)$.
+- **1. Reuso de Computações:** O Backpropagation reaproveita os prefixos de derivadas anteriores via recorrência $\boldsymbol{\delta}^{(l)} = (W^{T} \boldsymbol{\delta}) \odot \sigma'$ e produto diádico $\nabla_W \mathcal{L} = \boldsymbol{\delta} \mathbf{a}^T$.
+- **2. Catálogo Atômico e DAGs:** Decomposição em variáveis intermediárias avalia derivadas exatas sem inchaço simbólico e sem erro numérico.
+- **3. Acúmulo em Bifurcações:** A sensibilidade de nós com múltiplos filhos é a soma de todos os caminhos; a adição opera como roteador perfeito de fluxo.
+- **4. Forward vs. Reverse e Baur-Strassen:** Associatividade define JVPs vs VJPs; para perdas escalares ($d_{\text{out}}=1$), o modo reverso obtém o gradiente completo de bilhões de parâmetros em tempo $\le 5 C_{\text{eval}}$.
+:::
+
+::: {.content-visible when-format="html" unless-format="revealjs"}
+## O Que Fica em Aberto e Encerramento do Bloco 2
+
+Com esta aula, **concluímos o Bloco 2 do curso (O Cálculo da Otimização Diferenciável)**. Saímos do conceito de derivadas parciais e gradientes (Aula 6), passamos pela análise de convexidade e matriz Hessiana (Aula 7), dominamos a dinâmica do Gradient Descent em modelos convexos (Aula 8) e construímos a máquina universal de diferenciação exata em grafos de computação para modelos profundos (Aula 9).
+
+Agora possuímos um motor capaz de calcular gradientes de qualquer rede neural. Contudo, há um gargalo monumental que ainda não enfrentamos:
+- No California Housing, somamos os gradientes sobre todas as $N = 20.640$ residências para dar um único passo de descida.
+- O que acontece quando nosso dataset possui **100 milhões de imagens** ou **1 trilhão de tokens de texto**? Avaliar o grafo inteiro para dar um único passo é computacionalmente proibitivo!
+
+Além disso, como se comporta a dinâmica de descida quando a superfície de perda possui vales estreitos (*ravines*) e curvaturas heterogêneas?
+:::
+
+::: {.content-visible when-format="revealjs"}
+## Fechamento do Bloco 2
+
+::: {.callout-note icon=false}
+## A Jornada do Bloco 2 Concluída
+1. **Aula 6:** Gradientes e Jacobianos (sensibilidade direcional).
+2. **Aula 7:** Hessiana e Convexidade (garantias globais vs pontos críticos).
+3. **Aula 8:** Gradient Descent e o Lema da Descida em modelos lineares.
+4. **Aula 9:** Redes Neurais, Regra da Cadeia e o Motor de Autodiff.
 :::
 
 ::: {.fragment}
-**2.** $\mathbf{h}^\star = -\alpha \nabla f(\mathbf{x}_0)$ minimiza a aproximação linear $T_1$ sob a penalidade de confiança proximal $\frac{1}{2\alpha}\|\mathbf{h}\|_2^2$.
-:::
-
-::: {.fragment}
-**3.** No *denominator layout*, $\nabla_{\mathbf{x}}(g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$ ($(n \times m) \times (m \times 1) = n \times 1$).
-:::
-
-::: {.fragment}
-**4.** Sensibilidade retrógrada $\boldsymbol{\delta}^{(l)} = ((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}) \odot \sigma'(\mathbf{z}^{(l)})$; gradiente matricial $\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T$.
-:::
-
-::: {.fragment}
-**5.** Experimento confirma inclinações 2 e 3 em log-log no California Housing; o raio de fidelidade linear é limitado a passos curtos ($\|\mathbf{h}\| < 0{,}1$).
+**O Próximo Desafio:** Como treinar quando avaliar o grafo completo para todas as $N$ amostras é lento demais?
 :::
 :::
 
 ::: {.content-visible when-format="html" unless-format="revealjs"}
-## O Que Fica em Aberto e Limitações
-
-Nesta aula, desvendamos o maquinário do cálculo multivariado analítico: derivamos passo a passo as equações do *backpropagation* e provamos a validade das aproximações de Taylor. Contudo, dois grandes obstáculos conceituais e práticos desafiam a escalabilidade desse paradigma:
-
-### 1. O Custo Proibitivo da Derivação Manual em Grafos Complexos
-Nossa dedução de $\nabla_{W^{(l)}}\mathcal{L}$ foi realizada para uma rede estritamente sequencial (*feedforward*). Mas o que acontece quando a arquitetura possui conexões residuais (*skip connections* como nas ResNets), ramificações paralelas (como nos módulos Inception), transformações de atenção multi-cabeça (como nos Transformers) ou centenas de operações com controle de fluxo?
-Derivar analiticamente a regra da cadeia no papel para cada nova topologia é uma receita certa para erros humanos de álgebra linear e exige meses de trabalho braçal.
-
-### 2. A Inviabilidade da Diferenciação Simbólica (*Expression Swell*)
-Por que não deixamos um software de álgebra computacional (como SymPy ou Mathematica) calcular as derivadas analíticas simbolicamente?
-A resposta é o fenômeno do **inchaço de expressões**: ao aplicar a regra do produto e da cadeia simbolicamente de forma ingênua em uma rede profunda, o número de termos da expressão derivada cresce **exponencialmente** com a profundidade da rede, esgotando a memória RAM do computador antes mesmo de terminar o cálculo!
-
-::: {.callout-tip}
 ## Ponte para a Aula 10
-Na próxima aula (**Aula 10: Grafos de Computação e Diferenciação Automática**), resolveremos definitivamente esses dois dilemas:
-1. Formalizaremos os programas de computador como **Grafos Acíclicos Direcionados (DAGs)**.
-2. Descobriremos a **Diferenciação Automática** (*Autodiff*): a tecnologia revolucionária que não aproxima derivadas (como as diferenças finitas) nem expande fórmulas gigantescas (como a diferenciação simbólica), mas calcula derivadas analíticas com precisão de máquina no tempo de execução!
-3. Provaremos o célebre **Teorema de Baur-Strassen**, demonstrando por que o modo reverso (*reverse-mode AD*) calcula o gradiente em relação a bilhões de parâmetros com um custo computacional não superior a um pequeno múltiplo constante da passagem direta!
 
-[Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios" title="Ver exercícios"}
-[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções" title="Ver soluções"}
-:::
+Na próxima aula, inauguramos o **Bloco 3 (Dinâmica Avançada e Escala)** com o **Gradiente Descendente Estocástico (SGD) e Mini-Batching** (Aula 10). Analisaremos o gradiente sob a ótica de um estimador amostral ruidoso, provando que mini-batches reduzem dramaticamente o custo por iteração enquanto preservam a direção esperada de descida.
+
+Mais adiante, resgataremos as **Séries de Taylor Multivariadas** e a análise de curvatura de segunda ordem para responder: por que o gradiente oscila violentamente em vales estreitos e como os aceleradores de **Momento** (Polyak e Nesterov) e os métodos de segunda ordem (**Newton**) superam essas limitações!
+
+[Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios da aula" title="Ver exercícios da aula"}
+[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções dos exercícios" title="Ver soluções dos exercícios"}
 :::
 
 ::: {.content-visible when-format="revealjs"}
-## O Que Fica em Aberto: Os Limites da Derivação Manual
+## Próximos Passos: Bloco 3
 
 ::: {.callout-important}
-## Dois Grandes Dilemas
-- **Arquiteturas Complexas:** ResNets, Transformers e grafos com ramificações tornam a derivação manual no papel impossível de manter.
-- **Inchaço de Expressões (Simbólico):** Diferenciação algébrica ingênua expande expressões com custo exponencial $O(2^L)$ (*expression swell*).
+## Aula 10: Gradiente Descendente Estocástico (SGD) e Mini-Batching
+- Como substituir o somatório sobre $N$ amostras por mini-batches estocásticos.
+- O compromisso entre variância do gradiente e vazão computacional na GPU.
+- **E a seguir:** Modelos de curvatura de Taylor de 2ª ordem para Momento e Métodos de Newton!
 :::
 
-::: {.fragment .callout-tip}
-## Ponte para a Aula 10
-*Grafos de Computação e Diferenciação Automática*:
-- Como PyTorch e JAX diferenciam código arbitrário automaticamente?
-- Modos Forward vs. Reverse e o Teorema de Baur-Strassen!
-- Implementação de um mini-autograd do zero em Python!
-
-[Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios" title="Ver exercícios"}
-[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções" title="Ver soluções"}
+[Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios da aula" title="Ver exercícios da aula"}
+[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções dos exercícios" title="Ver soluções dos exercícios"}
 :::
-:::
-
