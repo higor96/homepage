@@ -6,7 +6,7 @@ description: "Machine Learning, Computer science in education, Data visualizatio
 about:
   template: jolla
   image-shape: round
-group: "Master Students"
+group: "Former Researchers"
 filters:
   - ../band-sections.lua
 links:

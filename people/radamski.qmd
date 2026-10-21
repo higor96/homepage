@@ -6,7 +6,7 @@ description: "Machine Learning, Neural Architecture Search, Pareto Front Learnin
 about:
   template: jolla
   image-shape: round
-group: "Ph.D. Students"
+group: "Former Researchers"
 filters:
   - ../band-sections.lua
 links:

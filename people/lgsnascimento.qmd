@@ -1,0 +1,18 @@
+---
+title: "Luiz Guilherme Sousa Nascimento"
+subtitle: "Undergraduate Research Assistant"
+image: generic-avatar.svg
+description: "Machine Learning"
+about:
+  template: jolla
+  image-shape: round
+group: "Undergrad Research Assistants"
+filters:
+  - ../band-sections.lua
+---
+
+[Institute of Computing - University of Campinas](https://ic.unicamp.br/)
+
+::: {#links}
+:::
+

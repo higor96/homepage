@@ -1,5 +1,5 @@
 ---
-title: "Soluções — Aula 9: Séries de Taylor e a Regra da Cadeia Multivariada"
+title: "Soluções — Aula 9: Funções Compostas, Redes Neurais e Diferenciação Automática"
 subtitle: "Otimização e Álgebra Linear para Machine Learning"
 date: "today"
 author: "Marcos M. Raimundo — Instituto de Computação, UNICAMP"
@@ -17,166 +17,167 @@ format:
 [Exercícios](exercicios.qmd){.see-all .exercicios-link aria-label="Ver exercícios" title="Ver exercícios"}
 
 ::: {.callout-tip icon=false}
-Este documento apresenta o gabarito detalhado das questões de Verdadeiro ou Falso
-da [folha de exercícios](exercicios.qmd). Cada afirmação é acompanhada de sua
-justificativa matemática formal.
-:::
-
-## Teste 1 — Polinômios e Séries de Taylor Multivariadas
-
-::: {.callout-note icon=false}
-## Afirmações
-- □ O polinômio de Taylor de grau 1 de uma função escalar suave $f: \mathbb{R}^d \to \mathbb{R}$ em torno de $\mathbf{x}_0$ define o hiperplano tangente ao gráfico de $f$ no ponto $(\mathbf{x}_0, f(\mathbf{x}_0))$.
-- □ Para qualquer função duas vezes continuamente diferenciável, o polinômio de Taylor de segunda ordem $T_2(\mathbf{x}_0 + \mathbf{h})$ é uma função estritamente convexa em relação a $\mathbf{h} \in \mathbb{R}^d$.
-- □ Se uma função $f: \mathbb{R}^d \to \mathbb{R}$ for um polinômio de grau 2, então o polinômio de Taylor de segunda ordem $T_2(\mathbf{x}_0 + \mathbf{h})$ é identicamente igual a $f(\mathbf{x}_0 + \mathbf{h})$ para todo $\mathbf{x}_0, \mathbf{h} \in \mathbb{R}^d$.
-- □ A aproximação de Taylor de primeira ordem de uma transformação afim $f(\mathbf{x}) = A\mathbf{x} + \mathbf{b}$ difere da função original por um termo proporcional a $\|\mathbf{h}\|_2^2$.
-:::
-
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** A função afim $T_1(\mathbf{x}) = f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T(\mathbf{x}-\mathbf{x}_0)$ possui o mesmo valor e o mesmo vetor gradiente que $f$ em $\mathbf{x}_0$, caracterizando o hiperplano tangente.
-- ✗ **F:** A convexidade de $T_2$ em relação a $\mathbf{h}$ exige que a Hessiana local $\nabla^2 f(\mathbf{x}_0)$ seja positiva semidefinida; se $\mathbf{x}_0$ estiver próximo a um ponto de sela ou máximo, $T_2$ é não-convexa.
-- ✔ **V:** Como todas as derivadas de ordem 3 ou superior de um polinômio de grau 2 são identicamente nulas, o resto de Taylor $R_2(\mathbf{h})$ é zero em todo o espaço.
-- ✗ **F:** Para uma função afim, a Hessiana é identicamente nula, de modo que a aproximação linear de primeira ordem é exata ($R_1(\mathbf{h}) \equiv 0$).
+Este documento apresenta as soluções detalhadas e justificativas conceituais para todas as questões de Verdadeiro ou Falso da lista de exercícios da Aula 09. As questões discursivas não possuem gabarito publicado.
 :::
 
 ---
 
-## Teste 2 — Restos de Lagrange e Ordens de Erro
+## Soluções das Questões de Verdadeiro/Falso
 
 ::: {.callout-note icon=false}
-## Afirmações
-- □ Pelo Teorema do Valor Médio multivariado, o resto de primeira ordem $R_1(\mathbf{h}) = f(\mathbf{x}_0 + \mathbf{h}) - T_1(\mathbf{x}_0 + \mathbf{h})$ pode ser expresso exatamente como $\frac{1}{2}\mathbf{h}^T \nabla^2 f(\boldsymbol{\xi})\mathbf{h}$ para algum ponto $\boldsymbol{\xi}$ pertencente ao segmento de reta entre $\mathbf{x}_0$ e $\mathbf{x}_0 + \mathbf{h}$.
-- □ Se a matriz Hessiana de uma função satisfizer $\|\nabla^2 f(\mathbf{x})\|_2 \le L$ para todo $\mathbf{x}$, o erro absoluto da aproximação linear de Taylor é limitado superiormente por $\frac{L}{2}\|\mathbf{h}\|_2^2$.
-- □ A notação assintótica $R_1(\mathbf{h}) = \mathcal{O}(\|\mathbf{h}\|^2)$ significa que o erro relativo $\frac{|R_1(\mathbf{h})|}{\|\mathbf{h}\|_2}$ diverge quando $\|\mathbf{h}\| \to 0$.
-- □ Em um gráfico log-log do erro absoluto de aproximação contra a norma do passo $\|\mathbf{h}\|_2$, a aproximação quadrática de Taylor exibe inclinação assintótica igual a 3.
+## Teste 1 — Regra da Cadeia Multivariada e Layouts Matriciais
+
+- □ No *denominator layout*, a matriz Jacobiana de uma transformação $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$ possui dimensão $n \times m$, onde cada coluna $j$ armazena o vetor-coluna do gradiente $\nabla_{\mathbf{x}} f_j$.
+- □ Para uma função afim $\mathbf{f}(\mathbf{x}) = A\mathbf{x} + \mathbf{b}$ com $A \in \mathbb{R}^{m \times n}$, a matriz Jacobiana sob a convenção *denominator layout* é dada por $J_{\mathbf{f}}(\mathbf{x}) = A$.
+- □ A regra da cadeia multivariada sob *denominator layout* estabelece que $\nabla_{\mathbf{x}} (g \circ \mathbf{f}) = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$, garantindo compatibilidade dimensional entre a matriz $n \times m$ e o gradiente-coluna $m \times 1$.
+- □ Se adotássemos a convenção de gradiente como vetor-linha (*numerator layout*), a regra da cadeia exigiria que os gradientes fossem transpostos para viabilizar o produto matricial à esquerda.
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** É a forma multivariada do resto de Lagrange, obtida aplicando a fórmula univariada à função auxiliar $\phi(t) = f(\mathbf{x}_0 + t\mathbf{h})$ para $t \in (0, 1)$.
-- ✔ **V:** Pela desigualdade de Cauchy-Schwarz e norma espectral: $|\frac{1}{2}\mathbf{h}^T \nabla^2 f(\boldsymbol{\xi})\mathbf{h}| \le \frac{1}{2}\|\mathbf{h}\|_2 \|\nabla^2 f(\boldsymbol{\xi})\|_2 \|\mathbf{h}\|_2 \le \frac{L}{2}\|\mathbf{h}\|_2^2$.
-- ✗ **F:** Pelo contrário: $R_1(\mathbf{h}) = \mathcal{O}(\|\mathbf{h}\|^2) \implies \frac{|R_1(\mathbf{h})|}{\|\mathbf{h}\|_2} \le C\|\mathbf{h}\|_2 \to 0$ quando $\|\mathbf{h}\| \to 0$.
-- ✔ **V:** Como $|R_2(\mathbf{h})| \le C \|\mathbf{h}\|_2^3$, em escala logarítmica temos $\log |R_2| \approx 3 \log \|\mathbf{h}\| + \text{constante}$, correspondendo à inclinação 3.
+::: {.callout-tip}
+## (Resposta) Teste 1 — Regra da Cadeia Multivariada e Layouts Matriciais
+
+- ✔ **Verdadeiro** — Por definição do *denominator layout*, se a variável independente $\mathbf{x} \in \mathbb{R}^n$ dita as linhas e a função dependente $\mathbf{f} \in \mathbb{R}^m$ dita as colunas, $J_{\mathbf{f}}(\mathbf{x}) \in \mathbb{R}^{n \times m}$ tem como colunas os gradientes das componentes $\nabla_{\mathbf{x}} f_j \in \mathbb{R}^n$.
+- ✗ **Falso** — Como $[J_{\mathbf{f}}]_{ij} = \frac{\partial f_j}{\partial x_i} = A_{ji}$, a Jacobiana é a transposta da matriz de pesos, $J_{\mathbf{f}}(\mathbf{x}) = A^T \in \mathbb{R}^{n \times m}$.
+- ✔ **Verdadeiro** — A multiplicação de $J_{\mathbf{f}} \in \mathbb{R}^{n \times m}$ pelo vetor-coluna $\nabla_{\mathbf{u}} g \in \mathbb{R}^{m \times 1}$ resulta perfeitamente no vetor-coluna $\nabla_{\mathbf{x}} h \in \mathbb{R}^{n \times 1}$.
+- ✗ **Falso** — No *numerator layout*, o gradiente já é definido nativamente como vetor-linha ($1 \times m$ e $1 \times n$); a regra da cadeia é escrita diretamente como $\nabla_{\mathbf{x}} (g \circ \mathbf{f}) = (\nabla_{\mathbf{u}} g) J_{\text{num}}$, sem necessidade de transposição.
 :::
 
 ---
 
-## Teste 3 — Otimização Proximal e a Conexão com Gradient Descent
-
 ::: {.callout-note icon=false}
-## Afirmações
-- □ O passo da Descida do Gradiente $\mathbf{h} = -\alpha \nabla f(\mathbf{x}_0)$ minimiza a aproximação linear de Taylor sem necessidade de restrições ou termos de penalidade sobre $\mathbf{h}$.
-- □ Na formulação de minimização proximal $\min_{\mathbf{h}} [f(\mathbf{x}_0) + \nabla f(\mathbf{x}_0)^T \mathbf{h} + \frac{1}{2\alpha}\|\mathbf{h}\|_2^2]$, o parâmetro $\alpha$ atua como o inverso do peso da penalidade de afastamento.
-- □ Minimizar a aproximação de Taylor de segunda ordem $T_2(\mathbf{x}_0 + \mathbf{h})$ quando a Hessiana $\nabla^2 f(\mathbf{x}_0)$ possui autovalores estritamente negativos produz uma direção de passo que garante a redução de $f$.
-- □ A constante de Lipschitz $L$ do gradiente fornece uma escolha teórica ótima de penalidade proximal $\alpha = 1/L$, garantindo a maior redução no limitante quadrático superior do Lema da Descida.
+## Teste 2 — Retropropagação de Sensibilidade e Saturação
+
+- □ O vetor de sensibilidade pré-sináptica é definido formalmente como $\boldsymbol{\delta}^{(l)} = \nabla_{\mathbf{z}^{(l)}} \mathcal{L}$, representando a taxa de variação da perda em relação à combinação linear antes da aplicação da ativação não-linear.
+- □ A equação de retropropagação $\boldsymbol{\delta}^{(l)} = \big((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}\big) \odot \sigma'(\mathbf{z}^{(l)})$ utiliza a matriz transposta $(W^{(l+1)})^T$ porque ela atua como o operador adjunto que transporta o sinal de erro de $\mathbb{R}^{d_{l+1}}$ de volta para $\mathbb{R}^{d_l}$.
+- □ Caso todos os neurônios da camada oculta operem na região linear da função logística ($z \approx 0$), temos $\sigma'(0) = 0{,}25$, o que amplifica exponencialmente o gradiente em direção às camadas iniciais.
+- □ A função de ativação ReLU ($\text{ReLU}(z) = \max(0, z)$) possui derivada constante igual a 1 para qualquer $z > 0$, eliminando a atenuação multiplicativa de sensibilidade nas unidades ativas durante a passagem reversa.
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✗ **F:** A minimização irrestrita de uma função afim é ilimitada inferiormente ($-\infty$); a penalidade quadrática $\frac{1}{2\alpha}\|\mathbf{h}\|_2^2$ é indispensável para limitar o passo.
-- ✔ **V:** O termo penalizador é $\frac{1}{2\alpha}\|\mathbf{h}\|_2^2$; portanto, valores grandes de $\alpha$ impõem penalidade fraca e valores pequenos impõem penalidade severa.
-- ✗ **F:** Se a Hessiana tiver autovalores negativos, $T_2$ é ilimitada inferiormente e o ponto crítico $\mathbf{h} = -H^{-1}\nabla f$ é um ponto de sela ou máximo local, podendo causar divergência extrema.
-- ✔ **V:** Substituindo $\alpha = 1/L$ no Lema da Descida $f(\mathbf{x}_{k+1}) \le f(\mathbf{x}_k) - \alpha(1 - \frac{\alpha L}{2})\|\nabla f\|^2$, maximiza-se o termo de decrescimento para $-\frac{1}{2L}\|\nabla f\|^2$.
+::: {.callout-tip}
+## (Resposta) Teste 2 — Retropropagação de Sensibilidade e Saturação
+
+- ✔ **Verdadeiro** — Esta é a definição canônica da variável adjunta intermediária na literatura de redes neurais, desacoplando a derivada linear da derivada da ativação.
+- ✔ **Verdadeiro** — Como $W^{(l+1)}: \mathbb{R}^{d_l} \to \mathbb{R}^{d_{l+1}}$, o operador que mapeia os gradientes de volta ao espaço dual de partida é o operador adjunto linear, representado matricialmente por $(W^{(l+1)})^T$.
+- ✗ **Falso** — Um fator $0{,}25 < 1$ **atenua** exponencialmente o sinal de erro ao longo das camadas (em 4 camadas, o sinal é reduzido por $(0{,}25)^4 = 1/256$), provocando desvanecimento de gradiente (*vanishing gradient*), e não amplificação.
+- ✔ **Verdadeiro** — Para $z > 0$, $\frac{d}{dz}\text{ReLU}(z) = 1$. Ao multiplicar via Hadamard por 1, o vetor de sensibilidade retropropagado não sofre atenuação provocada pela ativação.
 :::
 
 ---
 
-## Teste 4 — Regra da Cadeia e Convenções de Disposição (Layouts)
-
 ::: {.callout-note icon=false}
-## Afirmações
-- □ Na convenção *denominator layout*, o Jacobiano de uma função vetorial $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$ é uma matriz de dimensão $n \times m$.
-- □ Para a composição $y = g(\mathbf{f}(\mathbf{x}))$ com $g: \mathbb{R}^m \to \mathbb{R}$ e $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$, a regra da cadeia sob *denominator layout* é expressa por $\nabla_{\mathbf{x}} y = J_{\mathbf{f}}(\mathbf{x})\, \nabla_{\mathbf{u}} g$.
-- □ Na convenção *numerator layout*, o gradiente de uma função escalar em relação a um vetor $n \times 1$ é definido como um vetor-coluna $n \times 1$.
-- □ A regra da cadeia multivariada pode ser compreendida algebricamente como a multiplicação de matrizes de transformações lineares que aproximam localmente as funções compostas.
+## Teste 3 — Gradientes dos Pesos e Produtos Diádicos
+
+- □ O gradiente da perda em relação à matriz de pesos de uma camada densa para um único exemplo de treino é dado por $\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T$.
+- □ Como $\boldsymbol{\delta}^{(l)} \in \mathbb{R}^{d_l}$ e $\mathbf{a}^{(l-1)} \in \mathbb{R}^{d_{l-1}}$ são vetores, a matriz de gradiente $\nabla_{W^{(l)}}\mathcal{L}$ resultante de uma única amostra possui posto algébrico no máximo igual a 1.
+- □ Para um lote de $B$ amostras independentes, a matriz de gradiente acumulada $\frac{1}{B} \sum_{i=1}^B \boldsymbol{\delta}^{(l)}_i (\mathbf{a}^{(l-1)}_i)^T$ pode atingir posto estritamente maior que 1, limitado por $\min(d_l, d_{l-1}, B)$.
+- □ O gradiente do vetor de viés $\nabla_{\mathbf{b}^{(l)}}\mathcal{L}$ é proporcional ao produto da sensibilidade $\boldsymbol{\delta}^{(l)}$ pela média dos pesos da camada anterior.
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** As linhas correspondem às variáveis do denominador ($x_1, \dots, x_n$) e as colunas às funções ($f_1, \dots, f_m$).
-- ✔ **V:** $J_{\mathbf{f}} \in \mathbb{R}^{n \times m}$ multiplica o gradiente-coluna $\nabla_{\mathbf{u}} g \in \mathbb{R}^{m \times 1}$, resultando no vetor-coluna $\nabla_{\mathbf{x}} y \in \mathbb{R}^{n \times 1}$.
-- ✗ **F:** No *numerator layout*, a derivada de um escalar por um vetor-coluna resulta em um vetor-linha $1 \times n$.
-- ✔ **V:** Diferenciais infinitesimais transformam-se linearmente: $d\mathbf{y} = J_{\mathbf{g}}^T d\mathbf{u} = J_{\mathbf{g}}^T (J_{\mathbf{f}}^T d\mathbf{x}) = (J_{\mathbf{f}} J_{\mathbf{g}})^T d\mathbf{x}$.
+::: {.callout-tip}
+## (Resposta) Teste 3 — Gradientes dos Pesos e Produtos Diádicos
+
+- ✔ **Verdadeiro** — Pela regra da cadeia escalar, $\frac{\partial \mathcal{L}}{\partial W_{jk}} = \frac{\partial \mathcal{L}}{\partial z_j} \frac{\partial z_j}{\partial W_{jk}} = \delta_j a_k$, o que corresponde exatamente à entrada $(j, k)$ do produto externo $\boldsymbol{\delta} \mathbf{a}^T$.
+- ✔ **Verdadeiro** — Toda matriz gerada pelo produto externo de dois vetores não-nulos possui posto exatamente 1 ($\text{rk}(\mathbf{u}\mathbf{v}^T) = 1$).
+- ✔ **Verdadeiro** — A soma de $B$ matrizes de posto 1 pode gerar uma matriz com posto de até $B$, com teto imposto pelas dimensões da própria matriz ($\min(d_l, d_{l-1})$).
+- ✗ **Falso** — Como $\frac{\partial z_j}{\partial b_j} = 1$, temos diretamente $\nabla_{\mathbf{b}^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)}$, sem nenhuma dependência das ativações ou dos pesos anteriores.
 :::
 
 ---
 
-## Teste 5 — Jacobiano de Funções Vetoriais e Transformações Lineares
-
 ::: {.callout-note icon=false}
-## Afirmações
-- □ O Jacobiano de uma transformação puramente linear $\mathbf{f}(\mathbf{x}) = A \mathbf{x}$ (onde $A \in \mathbb{R}^{m \times n}$) na convenção *denominator layout* é a matriz transposta $A^T \in \mathbb{R}^{n \times m}$.
-- □ Para duas funções vetoriais compostas $\mathbf{x} \in \mathbb{R}^n \xrightarrow{\mathbf{f}} \mathbf{u} \in \mathbb{R}^m \xrightarrow{\mathbf{g}} \mathbf{y} \in \mathbb{R}^p$, o Jacobiano resultante em *denominator layout* é $J_{\mathbf{g} \circ \mathbf{f}}(\mathbf{x}) = J_{\mathbf{f}}(\mathbf{x})\, J_{\mathbf{g}}(\mathbf{f}(\mathbf{x}))$.
-- □ Se $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^n$ for diferenciável e inversível com inversa diferenciável $\mathbf{f}^{-1}$, o Jacobiano da função inversa satisfaz $J_{\mathbf{f}^{-1}}(\mathbf{f}(\mathbf{x})) = [J_{\mathbf{f}}(\mathbf{x})]^{-1}$.
-- □ O determinante da matriz Jacobiana de uma transformação não-linear entre espaços de mesma dimensão $\mathbb{R}^n \to \mathbb{R}^n$ mede o fator local de dilatação ou contração de volume induzido pela função.
+## Teste 4 — Paradigmas de Diferenciação e Instabilidade Numérica
+
+- □ O método de diferenças finitas progressivas aproxima derivadas com erro assintótico de truncamento $\mathcal{O}(h^2)$, enquanto a diferença central atinge $\mathcal{O}(h^3)$.
+- □ Ao reduzir o tamanho do passo $h$ abaixo de $\sqrt{\epsilon_{\text{mach}}} \approx 10^{-8}$ em aritmética de precisão dupla, o erro total das diferenças finitas aumenta devido ao fenômeno do cancelamento subtrativo catastrófico.
+- □ A diferenciação simbólica aplicada a funções com profundos aninhamentos sofre do problema de *expression swell*, onde o tamanho da árvore sintática cresce exponencialmente devido à replicação de termos da regra do produto.
+- □ Ao contrário de diferenças finitas, a Diferenciação Automática não introduz erros de truncamento numérico nem sofre de inchaço exponencial, calculando derivadas exatas em precisão de máquina.
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** Como $f_j = \sum_k A_{jk} x_k$, a derivada parcial é $\frac{\partial f_j}{\partial x_i} = A_{ji}$, compondo a matriz transposta $A^T$.
-- ✔ **V:** A composição encadeia-se na ordem das entradas: $(n \times m) \times (m \times p) = n \times p$.
-- ✔ **V:** Pelo Teorema da Função Inversa: $(\mathbf{f}^{-1} \circ \mathbf{f})(\mathbf{x}) = \mathbf{x} \implies J_{\mathbf{f}} J_{\mathbf{f}^{-1}} = I \implies J_{\mathbf{f}^{-1}} = J_{\mathbf{f}}^{-1}$.
-- ✔ **V:** Geometricamente, $|\det(J_{\mathbf{f}})|$ é a razão entre o hipervolume transformado $d\mathbf{f}(\Omega)$ e o volume original $d\Omega$.
+::: {.callout-tip}
+## (Resposta) Teste 4 — Paradigmas de Diferenciação e Instabilidade Numérica
+
+- ✗ **Falso** — A diferença progressiva possui erro de truncamento de primeira ordem $\mathcal{O}(h)$, e a diferença central atinge segunda ordem $\mathcal{O}(h^2)$.
+- ✔ **Verdadeiro** — Para $h < \sqrt{\epsilon_{\text{mach}}}$, os valores de $f(x+h)$ e $f(x)$ tornam-se quase idênticos em ponto flutuante, e a subtração descarta os dígitos mais significativos, erro que é amplificado pela divisão por $h$.
+- ✔ **Verdadeiro** — Como $(uv)' = u'v + uv'$, a diferenciação simbólica duplica recursivamente as subárvores de expressões a cada camada de aninhamento.
+- ✔ **Verdadeiro** — A autodiff avalia numericamente derivadas analíticas exatas a cada operação atômica, eliminando erros de truncamento e evitando a retenção de árvores simbólicas gigantescas.
 :::
 
 ---
 
-## Teste 6 — Propagação de Sensibilidades ($\boldsymbol{\delta}^{(l)}$) em Redes Neurais
-
 ::: {.callout-note icon=false}
-## Afirmações
-- □ O vetor de sensibilidade $\boldsymbol{\delta}^{(l)}$ é formalmente definido como o gradiente da função de perda em relação às ativações pré-sinápticas lineares $\mathbf{z}^{(l)}$.
-- □ Na passagem retrógrada de uma rede densa, o erro propaga-se de $l+1$ para $l$ através da equação $\boldsymbol{\delta}^{(l)} = \big((W^{(l+1)})^T \boldsymbol{\delta}^{(l+1)}\big) \odot \sigma'(\mathbf{z}^{(l)})$.
-- □ A multiplicação elemento a elemento por $\sigma'(\mathbf{z}^{(l)})$ atua como uma comporta de passagem que amplifica o sinal do erro quando as ativações estão muito distantes de zero na função logística.
-- □ A propagação do vetor de sensibilidade através de $L$ camadas envolve sucessivas multiplicações matriz-vetor, evitando a formação explícita de matrizes Jacobianas completas entre as camadas.
+## Teste 5 — Grafos de Computação (DAGs) e Execução
+
+- □ Em um Grafo Acíclico Direcionado que modela a execução de um programa, os nós representam operações elementares ou variáveis e as arestas direcionadas representam dependências de fluxo de dados.
+- □ A ordenação topológica dos nós em um DAG de computação é estritamente única, não existindo mais de uma sequência válida de avaliação para um mesmo grafo.
+- □ No algoritmo de backpropagation em DAGs, a ordenação topológica inversa garante que um nó intermediário só acumule seu gradiente total após todos os seus nós consumidores (filhos) terem executado suas respectivas passagens reversas.
+- □ Quando uma variável intermediária é consumida por duas operações distintas no grafo, seu gradiente total na passagem reversa deve ser obtido pela média aritmética dos gradientes provenientes de cada caminho.
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** $\boldsymbol{\delta}^{(l)} := \nabla_{\mathbf{z}^{(l)}} \mathcal{L} = \big(\frac{\partial \mathcal{L}}{\partial z_1^{(l)}}, \dots, \frac{\partial \mathcal{L}}{\partial z_{d_l}^{(l)}}\big)^T$.
-- ✔ **V:** É a dedução canônica da retropropagação obtida via regra da cadeia multivariada.
-- ✗ **F:** Na função logística, para $|z| \gg 1$ a derivada tende a zero ($\sigma'(z) \to 0$), amortecendo severamente (e não amplificando) o erro propagado.
-- ✔ **V:** A cada passo, multiplicamos a matriz de pesos transposta pelo vetor $\boldsymbol{\delta}^{(l+1)}$, mantendo o custo estritamente quadrático nas dimensões da camada $O(d_l d_{l+1})$.
+::: {.callout-tip}
+## (Resposta) Teste 5 — Grafos de Computação (DAGs) e Execução
+
+- ✔ **Verdadeiro** — É a definição formal de um grafo computacional, onde a topologia dita a ordem de execução e transmissão de derivadas.
+- ✗ **Falso** — Em qualquer DAG que possua nós em ramos independentes e paralelos, existem múltiplas ordenações topológicas equivalentes que satisfazem as restrições de precedência.
+- ✔ **Verdadeiro** — O percurso em ordem topológica inversa assegura que toda a contribuição de sensibilidade a jusante já tenha chegado ao nó antes que ele distribua seu eco para montante.
+- ✗ **Falso** — Pela regra da cadeia multivariada para variáveis repetidas, as contribuições devem ser **somadas** ($\bar{v}_i = \sum_{k \in \text{Ch}(i)} \bar{v}_k \frac{\partial \phi_k}{\partial v_i}$), e não calculadas pela média.
 :::
 
 ---
 
-## Teste 7 — Gradientes Matriciais de Pesos e Vieses em MLPs
-
 ::: {.callout-note icon=false}
-## Afirmações
-- □ Para uma única amostra de treinamento, a matriz de gradiente $\nabla_{W^{(l)}}\mathcal{L} \in \mathbb{R}^{d_l \times d_{l-1}}$ é obtida pelo produto diádico $\boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T$.
-- □ O posto da matriz de gradiente $\nabla_{W^{(l)}}\mathcal{L}$ calculada sobre um mini-batch de tamanho $B$ é limitado superiormente por $\min(B, d_l, d_{l-1})$.
-- □ O gradiente da perda em relação ao vetor de viés $\mathbf{b}^{(l)}$ é exatamente igual ao vetor de sensibilidade $\boldsymbol{\delta}^{(l)}$.
-- □ Se os neurônios da camada oculta anterior estiverem inativos ($\mathbf{a}^{(l-1)} = \mathbf{0}$), os pesos $W^{(l)}$ continuam recebendo atualizações proporcionais ao erro $\boldsymbol{\delta}^{(l)}$.
+## Teste 6 — Modo Forward vs. Modo Reverse e Baur-Strassen
+
+- □ O modo forward de autodiff rastreia perturbações direcionais $\dot{v}_i = \frac{\partial v_i}{\partial x_k}$ propagando-as simultaneamente à execução da passagem direta do programa.
+- □ Para calcular a matriz Jacobiana de um mapeamento $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$, o modo forward requer $n$ avaliações do grafo, enquanto o modo reverso requer $m$ avaliações do grafo.
+- □ O Teorema de Baur-Strassen estabelece que o tempo necessário para calcular o gradiente completo de qualquer função escalar $f: \mathbb{R}^n \to \mathbb{R}$ no modo reverso é no máximo cerca de 5 vezes o tempo de uma única avaliação direta de $f$, qualquer que seja o valor de $n$.
+- □ O modo reverso de autodiff é assintoticamente mais eficiente que o modo forward em problemas onde o número de parâmetros de entrada é substancialmente menor que a dimensão das saídas ($d_{\text{in}} \ll d_{\text{out}}$).
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** A sensibilidade do peso $W_{ij}^{(l)}$ é $\delta_i^{(l)} a_j^{(l-1)}$, que define exatamente o produto diádico $\boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T$.
-- ✔ **V:** O gradiente do batch é a soma de $B$ matrizes de posto 1: $\text{rk}(\sum_{b=1}^B \mathbf{u}_b \mathbf{v}_b^T) \le \min(B, d_l, d_{l-1})$.
-- ✔ **V:** Como $\frac{\partial z_i^{(l)}}{\partial b_i^{(l)}} = 1$, a regra da cadeia fornece diretamente $\frac{\partial \mathcal{L}}{\partial b_i^{(l)}} = \delta_i^{(l)}$.
-- ✗ **F:** Como $\nabla_{W^{(l)}}\mathcal{L} = \boldsymbol{\delta}^{(l)}(\mathbf{a}^{(l-1)})^T$, se $\mathbf{a}^{(l-1)} = \mathbf{0}$, a matriz de gradiente é identicamente nula.
+::: {.callout-tip}
+## (Resposta) Teste 6 — Modo Forward vs. Modo Reverse e Baur-Strassen
+
+- ✔ **Verdadeiro** — O modo forward calcula as variáveis tangentes $\dot{v}_i$ em sincronia perfeita com a passagem direta, sem necessidade de armazenar um grafo para retroação posterior.
+- ✔ **Verdadeiro** — O modo forward projeta perturbações da entrada ($n$ colunas da Jacobiana), enquanto o modo reverso projeta gradientes das saídas ($m$ linhas da Jacobiana).
+- ✔ **Verdadeiro** — Este é o enunciado fundamental de Baur-Strassen (1983), demonstrando que o custo temporal do gradiente no modo reverso é invariante à dimensão de entrada $n$.
+- ✗ **Falso** — Quando $d_{\text{in}} \ll d_{\text{out}}$, o modo forward é ordens de grandeza mais eficiente, pois exige apenas $d_{\text{in}}$ passagens pelo grafo contra $d_{\text{out}}$ passagens do modo reverso.
 :::
 
 ---
 
-## Teste 8 — Não-Linearidades, Saturação e o Desvanecimento do Gradiente
+::: {.callout-note icon=false}
+## Teste 7 — Catálogo de Regras Primitivas e Trade-off de Memória
+
+- □ O motor de autodiff utiliza um catálogo fechado de regras analíticas locais pré-programadas para cada operação atômica, evitando deduzir derivadas em tempo de execução.
+- □ A regra da adição $z = x + y$ atua no backward pass como um roteador neutro de fluxo, replicando integralmente o gradiente recebido para ambas as entradas ($\bar{x} = \bar{z}$ e $\bar{y} = \bar{z}$).
+- □ Na regra da multiplicação $z = x \cdot y$, o gradiente que retorna para a entrada $x$ independe do valor numérico assumido por $y$ durante a passagem direta.
+- □ Enquanto o modo forward mantém consumo de memória constante $\mathcal{O}(1)$ em relação à profundidade ao descartar valores logo após o uso, o modo reverso exige $\mathcal{O}(L)$ para reter ativações necessárias ao cálculo das derivadas locais.
+:::
+
+::: {.callout-tip}
+## (Resposta) Teste 7 — Catálogo de Regras Primitivas e Trade-off de Memória
+
+- ✔ **Verdadeiro** — O framework de autodiff não deduz cálculo simbolicamente para cada programa; ele mapeia cada operação elementar (adição, produto, exp, etc.) para funções com derivadas locais analíticas fixas e pré-programadas.
+- ✔ **Verdadeiro** — Como $\frac{\partial (x+y)}{\partial x} = 1$ e $\frac{\partial (x+y)}{\partial y} = 1$, pela regra da cadeia temos $\bar{x} = \bar{z} \cdot 1 = \bar{z}$ e $\bar{y} = \bar{z} \cdot 1 = \bar{z}$, distribuindo o sinal de erro intacto para ambos os operandos.
+- ✗ **Falso** — Pela regra do produto, $\frac{\partial (xy)}{\partial x} = y$, de modo que $\bar{x} = y \cdot \bar{z}$. O gradiente recebido por $x$ depende linearmente do valor numérico de $y$ armazenado durante a passagem direta.
+- ✔ **Verdadeiro** — O modo forward descarta valores intermediários logo após alimentar o próximo nó ($\mathcal{O}(1)$ na profundidade), enquanto o modo reverso precisa congelar a fita de ativações intermediárias na VRAM para alimentar as derivadas locais na volta ($\mathcal{O}(L)$).
+:::
+
+---
 
 ::: {.callout-note icon=false}
-## Afirmações
-- □ O valor máximo da derivada da função sigmoide logística $\sigma'(z) = \sigma(z)(1 - \sigma(z))$ é igual a $0{,}25$, ocorrendo quando $z = 0$.
-- □ Em uma rede neural profunda com 20 camadas e pesos inicializados com norma menor que 1, o produto repetido de derivadas $\sigma'(z) \le 0{,}25$ faz com que a norma de $\boldsymbol{\delta}^{(1)}$ decresça exponencialmente para zero.
-- □ A função de ativação ReLU evita o desvanecimento do gradiente porque sua derivada é identicamente 1 para qualquer entrada real $z \in \mathbb{R}$.
-- □ A perda de modelos neurais profundos é não-convexa em relação aos parâmetros, o que impede a garantia de convergência para o mínimo global a partir de qualquer ponto inicial.
+## Teste 8 — Transferência em ML: Grafos com Múltiplas Entradas e Saídas
+
+- □ Em uma rede siamesa para verificação facial, onde dois ramos idênticos processam duas imagens distintas e compartilham a mesma matriz de pesos $W$, o gradiente final em relação a $W$ é a soma dos gradientes gerados por cada ramo individual.
+- □ Em um modelo multi-tarefa com uma perda combinada $\mathcal{L}_{\text{total}} = \mathcal{L}_1 + \lambda \mathcal{L}_2$, uma única passagem reversa disparada a partir de $\mathcal{L}_{\text{total}}$ é suficiente para calcular o gradiente de todos os parâmetros compartilhados.
+- □ Se uma conexão residual for adicionada a uma camada densa na forma $\mathbf{y} = \sigma(W\mathbf{x}) + \mathbf{x}$, o gradiente em relação à entrada $\nabla_{\mathbf{x}}\mathcal{L}$ não depende da matriz $W$, dependendo apenas do gradiente externo.
+- □ Em arquiteturas com controle de fluxo condicional (como `if x > 0: y = a * x else: y = b * x`), a autodiff constrói o grafo dinamicamente em tempo de execução, diferenciando perfeitamente o ramo executado sem computar o ramo inativo.
 :::
 
-::: {.callout-tip icon=false}
-## Justificativas
-- ✔ **V:** Em $z=0$, $\sigma(0) = 0{,}5$, logo $\sigma'(0) = 0{,}5 \times 0{,}5 = 0{,}25$.
-- ✔ **V:** Cada camada multiplica o sinal por um fator menor ou igual a $0{,}25\|W^{(l)}\|_2$; com 20 camadas, o fator multiplicativo total é menor que $(0{,}25)^{20} \approx 9 \cdot 10^{-13}$.
-- ✗ **F:** A derivada da ReLU é 1 apenas para $z > 0$; para $z < 0$, a derivada é 0 (e não diferenciável em $z=0$).
-- ✔ **V:** As não-linearidades e produtos de pesos geram simetrias de permutação e pontos de sela, tornando a paisagem de perda não-convexa.
-:::
+::: {.callout-tip}
+## (Resposta) Teste 8 — Transferência em ML: Grafos com Múltiplas Entradas e Saídas
 
+- ✔ **Verdadeiro** — Como o nó de parâmetro $W$ possui arestas para os dois ramos, a regra da cadeia multivariada garante que $\bar{W} = \bar{W}_{\text{ramo 1}} + \bar{W}_{\text{ramo 2}}$.
+- ✔ **Verdadeiro** — Como $\mathcal{L}_{\text{total}}$ é um escalar único, o Teorema de Baur-Strassen se aplica diretamente: uma única passagem reversa acumula as contribuições de ambas as tarefas para todos os pesos.
+- ✗ **Falso** — Pela regra da cadeia, $\nabla_{\mathbf{x}}\mathcal{L} = J_{\sigma(W\mathbf{x})}^T \bar{\mathbf{y}} + I \bar{\mathbf{y}} = W^T(\bar{\mathbf{y}} \odot \sigma') + \bar{\mathbf{y}}$. O gradiente depende explicitamente de $W$, mas possui um termo aditivo identidade $\bar{\mathbf{y}}$ que previne o desvanecimento do gradiente.
+- ✔ **Verdadeiro** — Em motores de autodiff dinâmica (como PyTorch e o nosso mini-autodiff `Value`), o grafo de computação é construído dinamicamente traçando as operações que foram de fato executadas (*define-by-run*).
+:::
