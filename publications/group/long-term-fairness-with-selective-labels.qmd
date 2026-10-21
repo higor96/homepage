@@ -4,7 +4,7 @@ date: "2026-01-01"
 author: "Giovani Valdrighi, Isabel Valera, Marcos M Raimundo"
 author-ids: [gvaldrighi, mraimundo]
 scholar-ids: [iQXEldcAAAAJ, cpdQqpsAAAAJ, ibe0jfQAAAAJ]
-projects: [ai-for-finance-hiaac]
+projects: [long-term-machine-learning, ai-for-finance-hiaac]
 categories: [Ethical AI, Fair Credit Scoring, Selective Labels, Long-term Fairness]
 description: "Giovani Valdrighi, Isabel Valera, Marcos M Raimundo (2026). Forty-third International Conference on Machine Learning."
 links:

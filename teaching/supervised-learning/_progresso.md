@@ -19,6 +19,7 @@ Estado aprovado + notações, para dar continuidade entre aulas. O histórico de
 | `aula06` | 6 — Regressão logística e GLMs | A | Adult Census (idade, horas/semana) | publicada |
 | `aula07` | 7 — Regularização e MAP bayesiano | B | California Housing | publicada |
 | `aula08` | 8 — O tradeoff teórico viés-variância | B | Sintético ($f(x)=\sin(2\pi x)$) + California Housing | publicada |
+| `aula09` | 9 — Teoria de ensembles e redução de variância | A | California Housing (8 atributos) | publicada |
 
 ## Fio condutor (o que cada aula deixa para a seguinte)
 
@@ -31,6 +32,7 @@ Estado aprovado + notações, para dar continuidade entre aulas. O histórico de
 - **6:** logit/sigmoide, entropia cruzada = $-\ln L$, gradiente $X^T(\boldsymbol\mu-\mathbf y)$, Hessiana $X^TRX$ (convexa), IRLS, GLM e ligação canônica. **Ponte:** a separação perfeita faz $\lVert\mathbf w\rVert\to\infty$, o que motiva a regularização.
 - **7:** Ridge (forma fechada $(X^TX+\lambda I)^{-1}X^T\mathbf y$), Lasso e soft-thresholding, MAP (priori gaussiana → Ridge com $\lambda=\sigma^2/\tau^2$; Laplace → Lasso com $\lambda=\sigma^2/b$). **Ponte:** como escolher $\lambda$ → decomposição viés-variância (Aula 8).
 - **8:** Decomposição formal $\text{EMSE} = \text{Bias}^2 + \text{Var} + \sigma^2$; estimador como variável aleatória sobre $\mathcal{D}$; ortogonalidade e cancelamento do termo cruzado; Teorema de Hoerl & Kennard (1970) provando a existência de $\lambda > 0$ com $\text{MSE}(\hat{\boldsymbol\beta}_{\text{Ridge}}) < \text{MSE}(\hat{\boldsymbol\beta}_{\text{OLS}})$; curvas de aprendizado para diagnóstico de alto viés vs. alta variância. **Ponte:** encerramento da Parte 2; a Parte 3 ataca o tradeoff por Ensembles (Bagging reduz variância na Aula 9; Boosting reduz viés na Aula 10).
+- **9:** Bagging como média bootstrap; preservação de viés ($\mathbb{E}[\bar{T}] = \mathbb{E}[T]$); derivação da variância correlacionada $\rho \sigma^2 + \frac{1-\rho}{B}\sigma^2$; Random Forests (Breiman, 2001) e descorrelação via subamostragem de $m \le p$ variáveis por nó; avaliação Out-of-Bag ($(1 - 1/N)^N \to 1/e \approx 36{,}8\%$); MDI (viés de alta cardinalidade) vs. MDA (permutação OOB). **Ponte:** Bagging reduz variância partindo de árvores profundas; a Aula 10 ataca o viés via Boosting sequencial no espaço de funções.
 
 ## Dicionário de notações
 
@@ -62,6 +64,11 @@ Estado aprovado + notações, para dar continuidade entre aulas. O histórico de
 | $\text{EMSE}(\mathbf{x})$ | Erro Quadrático Médio Esperado $\mathbb{E}_{\mathcal{D},\epsilon}[(y - \hat{f}(\mathbf{x}))^2]$ | 8 |
 | $\bar{f}(\mathbf{x})$ | estimador médio $\mathbb{E}_{\mathcal{D}}[\hat{f}(\mathbf{x};\mathcal{D})]$ sobre conjuntos de treino | 8 |
 | $\text{Bias}^2(\mathbf{x}), \text{Var}(\mathbf{x}), \sigma^2$ | viés ao quadrado, variância do estimador e erro irredutível | 8 |
+| $\hat{f}_{\text{bag}}, \hat{f}_{\text{rf}}$ | estimadores Bagging e Random Forest | 9 |
+| $\rho$ (ensemble) | correlação par-a-par entre estimadores do ensemble | 9 |
+| $m$ (RF) | número de variáveis candidatas sorteadas por divisão de nó | 9 |
+| $\text{OOB}, \mathcal{B}_i$ | Out-of-Bag; conjunto de árvores onde $\mathbf{z}_i$ não participou do treino | 9 |
+| $\text{MDI}, \text{MDA}$ | Mean Decrease Impurity / Mean Decrease Accuracy (Permutação) | 9 |
 
 ## Pendências
 

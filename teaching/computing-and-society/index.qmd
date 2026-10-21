@@ -1,6 +1,6 @@
 ---
 title: "Computing and Society"
-date: "today"
+date: "2026-10-24"
 author: "Marcos M. Raimundo"
 description: "A critical and applied reflection on the transformative role of technology in the contemporary world, integrating ethics, social values, and human impact into the software development lifecycle."
 categories: [Computing, Ethics, Technology and Society, Responsible Innovation, Human-Centered Design]

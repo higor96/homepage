@@ -1,0 +1,38 @@
+---
+title: "Mechanistic Interpretability and Latent Controllability in Large Language Models"
+date: "2026-03-01"
+subtitle: "2026 – ongoing"
+description: "Research on mechanistic interpretability, representation engineering (RepE), and attention steering in foundation models — investigating internal activation geometry to detect hallucinations, prevent scope drift, mitigate demographic bias, and enforce safe behavioral alignment without full-model retraining."
+categories: [Mechanistic Interpretability, Representation Engineering, Large Language Models, Activation Steering, Latent Geometry, AI Safety, Fairness]
+participants: [mraimundo, gkerche]
+listing:
+  # related-publications-listing:start (gerado por generate_project_pages.py — não editar)
+  - id: related-publications
+    contents:
+      - "pubs-by-project/mechanistic-interpretability-llms/*.qmd"
+      - "../pubs-by-project/mechanistic-interpretability-llms/*.qmd"
+    type: default
+    sort: "date desc"
+    fields: [title, description]
+  # related-publications-listing:end
+---
+
+As Large Language Models (LLMs) and foundation models are increasingly deployed in high-stakes environments—from automated technical support and finance to decision assistance—ensuring their safety, faithfulness, and fairness has become paramount. Traditional control mechanisms that rely strictly on output-level filtering (such as prompt guards or text classifiers) are inherently reactive and brittle: adversarial prompts, jailbreaks, and hallucinations often bypass surface filters by manipulating internal representations before any final text is produced.
+
+This research line approaches AI safety, faithfulness, and transparency from the inside out, utilizing **mechanistic interpretability** and **representation engineering (RepE)**. By analyzing the geometry of internal activations, attention graph topologies, and the residual stream, we seek to understand how concepts, task scope, factual knowledge, and biases are encoded in intermediate layers. Leveraging these insights, we develop lightweight, inference-time interventions that steer and constrain model behavior without requiring costly full-model retraining.
+
+### Key Research Topics:
+
+* **Latent Geometry & Scope Drift Detection:** Identifying linear directions within the residual stream (using techniques such as Linear Artificial Tomography, LAT) that encode functional scope ("scope vectors") and task boundaries. By monitoring activations against a Conjugated Semantic Pool, we detect early task-drifting, out-of-distribution queries, and jailbreak attempts before the first output token is generated.
+* **Fairness-Aware Attention Steering (FAAS):** Enforcing distributional equality across demographic groups in in-context learning (for both LLMs and Tabular Foundation Models) by optimizing targeted, pre-softmax key-boosting vectors on fair task anchors, neutralizing implicit demographic bias without modifying model parameters.
+* **Activation Interventions & Scalable Transfer (PRISM):** Designing surgically precise activation interventions to expose and mitigate unsafe tool-calling behaviors and refusal inconsistencies, demonstrating how alignment controls transfer across quantization scales (e.g., NF4), cross-lingual contexts, and large model families (up to 70B parameters).
+* **Topological Signatures of Hallucination:** Investigating information flow patterns and dispersion across attention graphs to uncover structural anomalies that indicate context-sharing breakdown and distinguish hallucinated from truthful generations.
+* **Manifold Geometry & Uncertainty Quantification:** Combining directional specialty vectors with Local Intrinsic Dimensionality (LID) and Credal Wrappers to assess whether latent representations reside within a competent technical manifold or have drifted into low-confidence, high-risk regions.
+
+::: {#participants}
+:::
+
+## Related Publications
+
+::: {#related-publications}
+:::

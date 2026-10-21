@@ -1,0 +1,27 @@
+---
+title: "Learning Pareto Stationary Fronts via Single-Pass Backpropagation"
+date: "2026-10-05"
+author: "Elina Rojin Celik, M. M. Raimundo, Isabel Valera"
+author-ids: [mraimundo]
+scholar-ids: [ibe0jfQAAAAJ, cpdQqpsAAAAJ]
+projects: [deep_moo_theory, moml]
+categories: [Multi-objective Optimization, Deep Learning, Pareto Stationary Fronts]
+description: "Elina Rojin Celik, M. M. Raimundo, Isabel Valera (2026). Preprint."
+links:
+  - scholar: "https://www.semanticscholar.org/paper/8dd860096d4763098953f777376561b1ba8ac0a4"
+---
+
+## Abstract
+
+We propose MOSEL (Multi-Objective Stackelberg Efficient Learning), a framework for a posteriori multi-objective optimization (MOO) in deep neural networks that recovers a full front of Pareto stationary solutions at the computational cost of standard single-objective training. MOSEL reformulates the problem as a bilevel optimization problem that leverages network modularity to decouple representation learning from objective-preference alignment. Casting the bilevel optimization problem as a Stackelberg game enables solving the original a posteriori MOO problem in a single forward-backward pass. As a result, MOSEL matches the time and memory efficiency of standard single-objective training while enabling scalable Pareto stationary front learning. Empirically, MOSEL uncovers diverse and optimal Pareto frontiers in strongly conflicting settings (e.g., fairness-accuracy). Remarkably, even in weakly conflicting regimes such as multi-task learning, it consistently converges to solutions closer to the utopia point, outperforming both standard single-objective training and specialized multi-task learning methods. These results highlight the broader potential of a posteriori MOO learning as a pathway to efficiently learn more diverse and robust representations, ultimately improving generalization.
+
+::: {#links}
+:::
+
+## Authors
+
+::: {.paper-authors}
+<a href="https://www.google.com/search?q=Elina%20Rojin%20Celik" target="_blank" rel="noopener"><i class="bi bi-person-circle"></i><span>Elina Rojin Celik</span></a>
+<a href="/people/mraimundo.html"><img src="/people/mraimundo.jpg" alt="M. M. Raimundo"><span>M. M. Raimundo</span></a>
+<a href="https://scholar.google.com/citations?user=cpdQqpsAAAAJ&hl=pt-BR" target="_blank" rel="noopener"><img src="/coauthors/cpdQqpsAAAAJ.jpg" alt="Isabel Valera"><span>Isabel Valera</span></a>
+:::

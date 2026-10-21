@@ -1,0 +1,134 @@
+---
+title: "Exercícios — Aula 9: Teoria de Ensembles e Redução de Variância"
+subtitle: "Supervised Learning"
+date: "today"
+author: "Marcos M. Raimundo — Instituto de Computação, UNICAMP"
+lang: pt-BR
+toc: true
+toc-depth: 2
+format:
+  html:
+    include-after-body: ../../lesson-toc-accordion.html
+    theme: [flatly, ../../../custom.scss, ../../lesson-theme.scss]
+    number-sections: false
+---
+
+[Aula](index.qmd){.see-all .aula-link aria-label="Ver aula" title="Ver aula"}
+[Soluções](soluções.qmd){.see-all .solucoes-link aria-label="Ver soluções" title="Ver soluções"}
+
+::: {.callout-tip icon=false}
+O gabarito comentado das questões de Verdadeiro/Falso está em
+[`soluções.qmd`](soluções.qmd). Encontrou um erro numa questão? Corrija
+diretamente neste arquivo e abra um *pull request*.
+:::
+
+## Contexto e notação
+
+Nesta lista, consideramos o problema de aprendizado supervisionado de regressão e classificação sob a ótica da teoria de ensembles (ESL Cap. 8 e Cap. 15; Breiman, 1996, 2001).
+
+Seja $Z = \{(\mathbf{x}_1, y_1), \dots, (\mathbf{x}_N, y_N)\}$ uma amostra de treinamento com $N$ pares i.i.d. extraídos de uma distribuição conjunta $P(X, Y)$, onde $\mathbf{x} \in \mathbb{R}^p$ e $y \in \mathbb{R}$.
+
+1. **Bootstrap e Bagging:** Uma réplica bootstrap $Z^{*b}$ de tamanho $N$ é gerada por amostragem com reposição a partir de $Z$. O estimador Bagging ajusta um modelo base $T_b(\mathbf{x}) = \hat{f}(\mathbf{x}; Z^{*b})$ em cada uma de $B$ réplicas e agrega por média aritmética:
+   $$\hat{f}_{\text{bag}}(\mathbf{x}) = \frac{1}{B} \sum_{b=1}^B T_b(\mathbf{x})$$
+
+2. **Propriedades Estatísticas:** Se cada estimador base possui variância $\text{Var}(T_b(\mathbf{x})) = \sigma^2$ e correlação par-a-par linear positiva constante $\text{Corr}(T_b(\mathbf{x}), T_{b'}(\mathbf{x})) = \rho$ para $b \neq b'$, a esperança e a variância do estimador médio são:
+   $$\mathbb{E}[\hat{f}_{\text{bag}}(\mathbf{x})] = \mathbb{E}[T(\mathbf{x})], \qquad \text{Var}(\hat{f}_{\text{bag}}(\mathbf{x})) = \rho \sigma^2 + \frac{1 - \rho}{B}\sigma^2$$
+   No limite $B \to \infty$, $\text{Var}(\hat{f}_{\text{bag}}(\mathbf{x})) \to \rho \sigma^2$.
+
+3. **Florestas Aleatórias (Breiman, 2001):** Além da amostragem bootstrap de instâncias, ao particionar cada nó de cada árvore, seleciona-se aleatoriamente um subconjunto de $m \le p$ variáveis candidatas. O corte ótimo é buscado exclusivamente entre as $m$ variáveis sorteadas. Recomenda-se $m = \lfloor \sqrt{p} \rfloor$ em classificação e $m = \lfloor p/3 \rfloor$ em regressão.
+
+4. **Amostras Out-of-Bag (OOB):** A probabilidade de uma dada observação $\mathbf{z}_i$ não constar em uma amostra bootstrap de tamanho $N$ é $P(\mathbf{z}_i \notin Z^*) = (1 - 1/N)^N \xrightarrow{N \to \infty} 1/e \approx 0{,}368$. O preditor OOB para $\mathbf{x}_i$ agrega apenas as árvores nas quais $\mathbf{z}_i$ não participou do treino.
+
+5. **Importância de Atributos:**
+   - *Mean Decrease Impurity (MDI):* soma da redução ponderada de impureza acumulada pela variável em todas as árvores.
+   - *Mean Decrease Accuracy (MDA):* salto no erro de predição nas amostras OOB após a permutação aleatória dos valores da variável.
+
+---
+
+## Questões discursivas
+
+1. **Derivação da Variância Correlacionada e Análise de Custo-Benefício.**  
+   Apresente a dedução matemática completa da fórmula $\text{Var}(\bar{T}) = \rho \sigma^2 + \frac{1-\rho}{B}\sigma^2$ para um ensemble de $B$ estimadores com variância $\sigma^2$ e correlação mútua $\rho$. Em seguida, suponha que um modelo Bagging com árvores não podadas atinja correlação $\rho = 0{,}75$. Qual é a redução percentual máxima teórica na variância que pode ser obtida aumentando $B \to \infty$ em relação a uma única árvore ($B = 1$)? Se uma Random Forest conseguir reduzir a correlação para $\rho = 0{,}25$ sem elevar a variância individual $\sigma^2$, qual será a nova redução percentual máxima teórica?
+
+2. **O Mecanismo de Supressão da Correlação e o Tradeoff de $m$.**  
+   Considere um problema de classificação com $p = 64$ atributos, no qual $2$ atributos possuem forte sinal preditivo e os outros $62$ são moderadamente preditivos ou ruído puro. Explique em detalhes por que o Bagging tradicional ($m = 64$) falha em descorrelacionar as árvores, calculando a probabilidade de o corte na raiz ser conduzido por um dos dois atributos dominantes. Em seguida, calcule a probabilidade de nenhum dos dois atributos dominantes estar disponível na escolha de um nó de Random Forest com $m = \lfloor \sqrt{64} \rfloor = 8$, e discuta o impacto dessa ausência na correlação $\rho$ e no viés do ensemble.
+
+3. **Mecânica Out-of-Bag e Demonstração do Limite Assintótico.**  
+   Demonstre rigorosamente, utilizando a expansão em série de Taylor do logaritmo natural ou a definição fundamental do número $e$, que $\lim_{N \to \infty} (1 - 1/N)^N = e^{-1}$. Em seguida, explique por que a estimativa de erro calculada sobre as amostras Out-of-Bag (OOB) é assintoticamente equivalente a uma validação cruzada *Leave-One-Out* ($N$-fold CV), destacando por que essa propriedade não é compartilhada por métodos aditivos como o Boosting.
+
+---
+
+## Questões de Verdadeiro/Falso
+
+::: {.callout-note icon=false}
+## Teste 1 — Mecânica do Bagging e Preservação do Viés
+
+- □ O estimador Bagging é obtido calculando a média aritmética das predições de múltiplos modelos base ajustados em amostras bootstrap independentes com reposição.
+- □ A operação de média linear entre múltiplos estimadores não paramétricos é capaz de reduzir o viés de aproximação estrutural de modelos que sofrem de subajuste severo.
+- □ Árvores de decisão não podadas (profundas) são os estimadores ideais para o Bagging porque possuem viés assintótico muito baixo acompanhado de alta variância amostral.
+- □ Como cada réplica bootstrap possui tamanho $N$ idêntico ao conjunto original, o viés de cada árvore bootstrap é matematicamente inferior ao de uma árvore treinada no dataset original pleno.
+:::
+
+::: {.callout-note icon=false}
+## Teste 2 — Variância de Variáveis Aleatórias Correlacionadas
+
+- □ Na expansão da variância da soma $\text{Var}\left(\sum_{b=1}^B T_b\right)$, existem exatamente $B$ termos de variância individual e $B(B-1)$ termos de covariância par-a-par.
+- □ O termo residual $\frac{1-\rho}{B}\sigma^2$ na equação da variância do ensemble decai para zero com taxa $O(1/B)$ à medida que o número de árvores $B$ cresce.
+- □ Se a correlação par-a-par entre todas as árvores for estritamente nula ($\rho = 0$), o ensemble de tamanho finito $B = 100$ elimina $99\%$ da variância do estimador individual.
+- □ Se dois modelos base forem negativamente correlacionados ($\rho < 0$), a variância da média de ambos pode ser estritamente inferior a $\frac{\sigma^2}{2}$.
+:::
+
+::: {.callout-note icon=false}
+## Teste 3 — Comportamento Assintótico e Limites do Bagging
+
+- □ O patamar assintótico de variância intransponível pelo Bagging quando $B \to \infty$ é quantificado algebricamente pelo produto $\rho \sigma^2$.
+- □ Adicionar mais árvores a um modelo Bagging além do ponto de estabilização do erro assintótico eventualmente fará o modelo sofrer sobreajuste (*overfitting*).
+- □ Estimadores lineares estáveis, como a regressão por Mínimos Quadrados Ordinários (OLS), exibem correlação bootstrap elevada ($\rho \approx 0{,}50$) e quase nada ganham com Bagging.
+- □ Em problemas de classificação sob a perda $0-1$, a redução de variância promovida pelo Bagging pode, em certos cenários onde o viés é correto, reduzir a taxa de erro de forma mais agressiva que a decomposição aditiva da perda quadrática.
+:::
+
+::: {.callout-note icon=false}
+## Teste 4 — O Algoritmo de Random Forests e a Quebra de Correlação
+
+- □ No algoritmo de Florestas Aleatórias (Breiman, 2001), a subamostragem aleatória de $m$ variáveis ocorre apenas uma única vez na raiz de cada árvore.
+- □ Para problemas de regressão com $p$ variáveis, o valor canônico recomendado na literatura estatística para o número de atributos sorteados por nó é $m = \lfloor p/3 \rfloor$.
+- □ Ajustar $m = p$ em uma Random Forest faz o algoritmo coincidir exatamente com o Bagging de árvores de decisão.
+- □ A diminuição do hiperparâmetro $m$ para valores muito baixos (como $m = 1$) reduz drasticamente a correlação $\rho$, mas pode deteriorar o desempenho global por inflacionar o viés individual das árvores.
+:::
+
+::: {.callout-note icon=false}
+## Teste 5 — A Matemática do Bootstrap e das Amostras Out-of-Bag (OOB)
+
+- □ Em uma amostra bootstrap de tamanho $N$ extraída com reposição de um conjunto com $N$ pontos, a probabilidade de uma dada observação ser sorteada pelo menos uma vez é assintoticamente $1 - 1/e \approx 63{,}2\%$.
+- □ A proporção assintótica de instâncias que não entram em uma réplica bootstrap específica converge para zero quando o tamanho da base de treino $N \to \infty$.
+- □ A predição Out-of-Bag de uma observação $\mathbf{x}_i$ é calculada utilizando a média das predições de todas as $B$ árvores treinadas na floresta.
+- □ O erro Out-of-Bag oferece uma estimativa não enviesada do erro de generalização sem a necessidade de reservar um conjunto de teste independente ou rodar validação cruzada $k$-fold.
+:::
+
+::: {.callout-note icon=false}
+## Teste 6 — Interpretabilidade e Importância de Atributos: MDI vs. MDA
+
+- □ A métrica Mean Decrease Impurity (MDI) mede a importância acumulando a redução ponderada do índice de Gini ou do erro quadrático promovida por cada variável em todas as divisões da floresta.
+- □ O cálculo da importância por permutação (MDA) embaralha aleatoriamente a coluna do atributo de interesse exclusivamente dentro das amostras Out-of-Bag (OOB) de cada árvore.
+- □ A métrica MDI possui um viés sistemático que tende a superestimar a importância de atributos categóricos ou contínuos com alta cardinalidade (muitos valores distintos).
+- □ Se um atributo puramente aleatório e sem poder preditivo for incluído no treinamento de uma Random Forest, o MDA atribuirá a ele uma importância próxima de zero ou discretamente negativa.
+:::
+
+::: {.callout-note icon=false}
+## Teste 7 — Diagnóstico Prático e Comparação de Modelos
+
+- □ Uma árvore de decisão única profunda ajustada em dados complexos exibe tipicamente erro de treino próximo de zero e erro de teste substancialmente elevado, caracterizando alta variância.
+- □ O erro de teste de uma Random Forest diminui monotonicamente à medida que aumentamos o número de árvores $B$, atingindo eventualmente zero com $B$ suficientemente grande.
+- □ A convergência do erro OOB ao longo do crescimento de $B$ pode ser utilizada como critério prático de parada para o treinamento de Random Forests.
+- □ Florestas Aleatórias requerem normalização ou padronização prévia rigorosa de variáveis numéricas (como z-score) para que atributos em escalas maiores não dominem as divisões de corte.
+:::
+
+::: {.callout-note icon=false}
+## Teste 8 — Transferência de Conceitos: Bagging vs. Boosting
+
+- □ Tanto o Bagging quanto o Boosting utilizam amostragem bootstrap com reposição para treinar seus modelos base de forma independente e simultânea em paralelo.
+- □ Enquanto o Bagging parte de modelos de alta flexibilidade (baixo viés) para reduzir variância, o Boosting combina iterativamente modelos simples (alto viés) para reduzir viés.
+- □ Em ensembles do tipo Bagging, nenhuma árvore depende dos erros residuais cometidos pelas árvores previamente treinadas.
+- □ Ao contrário de Random Forests, que são imunes ao sobreajuste pelo simples acréscimo de árvores $B \to \infty$, algoritmos de Boosting podem sofrer sobreajuste se o número de iterações for excessivo.
+:::
+

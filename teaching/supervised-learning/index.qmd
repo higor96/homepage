@@ -1,6 +1,6 @@
 ---
 title: "Supervised Learning"
-date: "today"
+date: "2026-10-23"
 author: "Marcos M. Raimundo"
 categories: [Disciplines, AI, Machine Learning, Supervised Learning, Statistics]
 include-after-body:
@@ -84,9 +84,9 @@ The goal is to provide a deep understanding of how supervised algorithms learn a
 
 ### Part 3: Advanced Models and Optimization
 
-*   **Lesson 9: Ensemble Theory and Variance Reduction**
+*   [**Lesson 9: Ensemble Theory and Variance Reduction**](./aula09/index.qmd)
     *   **ML Concept:** Bagging and Random Forests.
-    *   **Statistical Concept:** Statistical properties of the average of random variables, the variance formula for a sum of correlated variables (\\(\rho\\)), and how feature subsampling mathematically breaks that correlation.
+    *   **Statistical Concept:** Statistical properties of the average of random variables, the variance formula for a sum of correlated variables (\(\rho\)), and how feature subsampling mathematically breaks that correlation.
     *   **Objectives:** Explain ensemble gains quantitatively through the variance term of the decomposition from Lesson 8.
     *   **Expected Competencies:** Ability to derive the variance of an averaged correlated ensemble and predict how it responds to changes in tree count and feature subsampling rate.
 

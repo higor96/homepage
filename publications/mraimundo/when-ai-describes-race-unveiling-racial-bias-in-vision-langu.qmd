@@ -4,7 +4,7 @@ date: "2026-01-01"
 author: "Leodécio Braz da Silva Segundo, Marcos M Raimundo"
 author-ids: [mraimundo]
 scholar-ids: [ibe0jfQAAAAJ]
-projects: [ai-for-finance-hiaac]
+projects: [mechanistic-interpretability-llms]
 categories: [Ethical AI, Vision-Language Models, Racial Bias]
 description: "Leodécio Braz da Silva Segundo, Marcos M Raimundo (2026). Algorithmic Fairness Across Alignment Procedures and Agentic Systems."
 links:

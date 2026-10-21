@@ -19,14 +19,12 @@ listing:
     max-items: 4
   - id: projects
     contents:
-      - projects/ai-for-finance-hiaac.qmd
-      - projects/applied-deep-learning.qmd
-      - projects/long-term-machine-learning.qmd
-      - projects/moml.qmd
+      - "projects/*.qmd"
+      - "!projects/index.qmd"
     type: default
     sort: "date desc"
     fields: [title, subtitle, description, categories]
-    max-items: 4
+    max-items: 3
   - id: publications
     contents:
       - "publications/group/*.qmd"

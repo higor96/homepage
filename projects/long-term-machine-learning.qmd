@@ -1,11 +1,21 @@
 ---
 title: "Long-Term Impacts of Machine Learning-Supported Decisions"
 date: "2026-01-01"
-subtitle: "2026 – 2029"
+subtitle: "2026 – ongoing"
 image: long-term-ml-decisions.jpg
 description: "A two-stage sequential decision-making framework combining offline reinforcement learning, contextual bandits, and multi-objective optimization to eliminate harmful feedback loops, mitigate selective labels (reject inference), and ensure long-term fairness and policy flexibility."
 categories: [Responsible AI, Long-Term Fairness, Sequential Decision-Making, Multi-Objective Optimization, Offline Reinforcement Learning, Contextual Bandits, Performative Prediction]
 participants: [mraimundo, gvaldrighi, dggratti, kttamashiro]
+listing:
+  # related-publications-listing:start (gerado por generate_project_pages.py — não editar)
+  - id: related-publications
+    contents:
+      - "pubs-by-project/long-term-machine-learning/*.qmd"
+      - "../pubs-by-project/long-term-machine-learning/*.qmd"
+    type: default
+    sort: "date desc"
+    fields: [title, description]
+  # related-publications-listing:end
 ---
 
 In sequential decision-making environments (such as credit scoring, hiring, and admissions), standard machine learning models often trigger harmful feedback loops. Decisions made under partial information—a phenomenon exemplified by *reject inference*, where the outcomes of denied applicants remain unobserved—create permanent data blind spots. When retrained on historical data filtered by past myopic choices, models suffer from distribution shifts, policy collapse, and systemic amplification of social bias.
@@ -25,4 +35,9 @@ By treating fairness as a strategic mechanism for active data collection into in
 * **Open-Source Responsible AI Infrastructure & Benchmarks:** Developing a general-purpose open-source software library and data-driven simulation benchmark (using longitudinal datasets such as Lending Club) for evaluating the multi-year socio-economic impact of decision policies.
 
 ::: {#participants}
+:::
+
+## Related Publications
+
+::: {#related-publications}
 :::

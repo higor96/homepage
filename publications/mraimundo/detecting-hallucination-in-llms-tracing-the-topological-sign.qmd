@@ -1,0 +1,25 @@
+---
+title: "Detecting Hallucination in LLMs: Tracing the Topological Signatures of Impaired Context Sharing"
+date: "2026-01-01"
+author: "Amir Jalilifard, Anderson Rocha, Eric Wong, Marcos M. Raimundo"
+author-ids: [mraimundo]
+scholar-ids: [35JCP6UAAAAJ, ibe0jfQAAAAJ]
+projects: [mechanistic-interpretability-llms]
+categories: [Large Language Models, Hallucination Detection, Attention Graphs, Mechanistic Interpretability]
+description: "Amir Jalilifard, Anderson Rocha, Eric Wong, Marcos M. Raimundo (2026). Preprint."
+links:
+---
+
+## Abstract
+
+In this work, we examine the topology of information flow patterns within attention graphs to effectively distinguish hallucinated from non-hallucinated generations in Large Language Models. By analyzing the structural integrity and information dispersion across attention layers, we identify characteristic topological anomalies associated with context breakdown and factual inconsistency.
+
+
+## Authors
+
+::: {.paper-authors}
+<a href="https://scholar.google.com/citations?user=35JCP6UAAAAJ&hl=pt-BR" target="_blank" rel="noopener"><img src="/coauthors/35JCP6UAAAAJ.jpg" alt="Amir Jalilifard"><span>Amir Jalilifard</span></a>
+<a href="https://www.google.com/search?q=Anderson%20Rocha" target="_blank" rel="noopener"><i class="bi bi-person-circle"></i><span>Anderson Rocha</span></a>
+<a href="https://www.google.com/search?q=Eric%20Wong" target="_blank" rel="noopener"><i class="bi bi-person-circle"></i><span>Eric Wong</span></a>
+<a href="/people/mraimundo.html"><img src="/people/mraimundo.jpg" alt="Marcos M. Raimundo"><span>Marcos M. Raimundo</span></a>
+:::
