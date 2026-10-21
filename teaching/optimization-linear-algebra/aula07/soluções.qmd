@@ -139,7 +139,7 @@ Nos itens abaixo, $f(\mathbf{x})=\tfrac12\mathbf{x}^TP\mathbf{x}+\mathbf{q}^T\ma
 ## (Resposta) Teste 7 — Quadráticas e pontos críticos
 
 - ✔ Verdadeiro — Com $P=\begin{bmatrix}2&0\\0&0\end{bmatrix}$ e $\mathbf{q}=(0,1)$, $f=x_1^2+x_2$, que vai a $-\infty$ quando $x_2\to-\infty$. $f$ é convexa, mas não tem ponto crítico.
-- ✔ Verdadeiro — $P$ é invertível, então $\nabla f=P\mathbf{x}+\mathbf{q}=\mathbf{0}$ tem solução única $\mathbf{x}^\star=-P^{-1}\mathbf{q}$. Pela expansão exata, $f$ sobe ao longo de um autovetor e desce ao longo do outro.
+- ✔ Verdadeiro — $P$ é invertível, então $\nabla f(\mathbf{x})=P\mathbf{x}+\mathbf{q}=\mathbf{0}$ tem solução única $\mathbf{x}^\star=-P^{-1}\mathbf{q}$. Pela expansão exata, $f$ sobe ao longo de um autovetor e desce ao longo do outro.
 - ✗ Falso — Depende de $\mathbf{q}$. Se $\mathbf{q}$ tem componente no núcleo de $P$, não há minimizador (item 1). Só quando $\mathbf{q}$ é ortogonal ao núcleo aparece o vale plano, com uma reta de minimizadores.
 - ✔ Verdadeiro — Para quadráticas, a expansão de Taylor de segunda ordem é exata, e o termo de primeira ordem some porque $\nabla f(\mathbf{x}^\star)=\mathbf{0}$.
 :::
